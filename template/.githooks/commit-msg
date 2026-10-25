@@ -1,0 +1,15 @@
+#!/bin/sh
+# Blocks a commit message that names the Windows account or the user folder.
+root=$(git rev-parse --show-toplevel) || { echo "commit-msg: git rev-parse failed. Commit blocked." >&2; exit 1; }
+kb="$root/.kb/kb.py"
+if [ ! -f "$kb" ]; then
+  echo "commit-msg: .kb/kb.py is missing, so the message check cannot run. Commit blocked." >&2
+  exit 1
+fi
+for py in python py python3; do
+  if command -v "$py" >/dev/null 2>&1 && "$py" -c "import sys; sys.exit(sys.version_info < (3, 8))" >/dev/null 2>&1; then
+    exec "$py" "$kb" check-msg "$1"
+  fi
+done
+echo "commit-msg: no working Python 3.8+ (python, py or python3), so the message check cannot run. Commit blocked." >&2
+exit 1

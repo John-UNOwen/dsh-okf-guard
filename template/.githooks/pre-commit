@@ -1,0 +1,16 @@
+#!/bin/sh
+# Knowledge base safety net: runs ".kb/kb.py check --staged" and blocks the commit if it fails.
+# It catches commits that bypass kb.py. The user may skip it with --no-verify; agents never may.
+root=$(git rev-parse --show-toplevel) || { echo "pre-commit: git rev-parse failed. Commit blocked." >&2; exit 1; }
+kb="$root/.kb/kb.py"
+if [ ! -f "$kb" ]; then
+  echo "pre-commit: .kb/kb.py is missing, so the knowledge base check cannot run. Commit blocked." >&2
+  exit 1
+fi
+for py in python py python3; do
+  if command -v "$py" >/dev/null 2>&1 && "$py" -c "import sys; sys.exit(sys.version_info < (3, 8))" >/dev/null 2>&1; then
+    exec "$py" "$kb" check --staged
+  fi
+done
+echo "pre-commit: no working Python 3.8+ (python, py or python3), so the knowledge base check cannot run. Commit blocked." >&2
+exit 1

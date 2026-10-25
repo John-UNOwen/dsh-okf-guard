@@ -1,0 +1,3 @@
+# Tooling runs under sh and Python on every PC, so keep it at LF on checkout.
+.githooks/* text eol=lf
+.kb/*.py text eol=lf

@@ -36,6 +36,61 @@ through `kb.py`. The section is only added when `.kb\kb.py` exists.
 
 Everything outside the knowledge base is left alone.
 
+## Set up a knowledge base
+
+The plugin guards an existing knowledge base. This repo ships a starter one in
+[`template/`](template): `kb.py` (the tool agents use), the git hooks that check
+every commit, and empty root, `general` and `projects` indexes.
+
+You need [git](https://git-scm.com/), Python 3.8 or later, and the
+[okf](https://github.com/W4G1/okf) command-line tool:
+
+```powershell
+cargo install okf
+```
+
+`kb.py` looks for okf in `OKF_EXE`, then on `PATH`, then in
+`%USERPROFILE%\.cargo\bin`.
+
+Create the knowledge base at `%USERPROFILE%\knowledge` (PowerShell, from a
+clone of this repo):
+
+```powershell
+$kb = "$env:USERPROFILE\knowledge"
+Copy-Item -Recurse .\template $kb
+git -C $kb init -b main
+git -C $kb config core.hooksPath .githooks
+python "$kb\.kb\kb.py" log Created index.md 'knowledge base'
+git -C $kb add -A
+git -C $kb commit -m "kb: start the knowledge base"
+```
+
+The `log` line writes the first dated entry in `log.md`, which okf requires.
+On macOS or Linux, use `~/knowledge`, `python3`, and run
+`chmod +x ~/knowledge/.githooks/*` before the first commit.
+
+Then try it:
+
+```powershell
+python "$kb\.kb\kb.py" new projects/my-app/decisions/use-sqlite.md --type Decision --title 'Use SQLite for the cache' --description 'Why SQLite beats a JSON file for the cache.' --by human:me
+```
+
+Open the new file, replace every `TODO(kb)` line with real text, and commit it.
+`kb.py commit` stages the concept with its index and log lines, and the hook
+checks the result:
+
+```powershell
+python "$kb\.kb\kb.py" commit -m 'kb: add my-app decision use-sqlite' projects/my-app/decisions/use-sqlite.md
+```
+
+To keep the knowledge base on more than one PC, add a remote and push as usual.
+On each other clone, run `git config core.hooksPath .githooks` once, because git
+doesn't copy that setting. If your Windows account name could end up in paths
+in some other form, add it with `git config kb.privateName "<name>"`; the hooks
+and this plugin both block it.
+
+To use a different folder, set `knowledgeRoot` (see Settings).
+
 ## Install
 
 ```powershell
