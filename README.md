@@ -31,8 +31,8 @@ When another plugin or hook also has a say, its deny or its own question wins ov
 Commands are found anywhere in a line: after `$x =`, inside `( )`, `$( )` and `{ }` blocks, after `&`, and inside `cmd /c`, `pwsh -c`, `bash -c`, `iex` and `Start-Process`. A block anywhere in a line wins over a question elsewhere in it.
 
 **Adds a short section to the system prompt.** It says where the knowledge base
-is, what belongs there and what belongs in mnemon, and that changes go
-through `kb.py`. The section is only added when `.kb\kb.py` exists.
+is, what belongs there and what doesn't (personal preferences, run notes,
+handoffs), and that changes go through `kb.py`. The section is only added when `.kb\kb.py` exists.
 
 Everything outside the knowledge base is left alone.
 

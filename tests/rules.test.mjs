@@ -195,7 +195,8 @@ describe('prompt section', () => {
     const text = guard.promptText()
     assert.match(text, /# Knowledge base/)
     assert.match(text, WIN ? /%USERPROFILE%\\knowledge/ : /~\/knowledge/)
-    assert.match(text, /mnemon/)
+    assert.match(text, /AGENTS\.md/)
+    assert.doesNotMatch(text, /mnemon/i)
     assert.doesNotMatch(text, /Test Person/i)
   })
   it('is empty when kb.py is missing', () => {
