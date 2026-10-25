@@ -10,7 +10,10 @@ const sep = WIN ? '\\' : '/'
 const kb = (...parts) => [KB, ...parts].join(sep)
 const OTHER = WIN ? 'C:\\work\\proj' : '/work/proj'
 
-const existing = new Set([kb('.kb', 'kb.py'), kb('projects', 'a', 'decisions', 'old.md'), kb('projects', 'a', 'index.md')].map((p) => p.toLowerCase()))
+const DOCS = `${HOME}${sep}Documents`
+const existing = new Set(
+  [kb('.kb', 'kb.py'), kb('projects', 'a', 'decisions', 'old.md'), kb('projects', 'a', 'index.md'), kb('projects', 'a.md')].map((p) => p.toLowerCase()),
+)
 const SHORT = WIN ? 'C:\\Users\\TESTPE~1' : null
 const env = { home: HOME, shortHome: SHORT, privateNames: ['Test Person'], exists: (p) => existing.has(String(p).toLowerCase()) }
 const guard = createGuard({ knowledgeRoot: '~/knowledge' }, env)
@@ -198,5 +201,233 @@ describe('prompt section', () => {
   it('is empty when kb.py is missing', () => {
     const bare = createGuard({}, { ...env, exists: () => false })
     assert.equal(bare.promptText(), '')
+  })
+})
+
+const bash = (command, cwd = OTHER) => guard.decide({ name: 'bash', arguments: { command }, agent: { session: { header: { cwd } } } })
+
+describe('review 1 and 9: git and okf anywhere in a command', () => {
+  it('finds git behind assignments, brackets, blocks and the call operator', () => {
+    for (const c of [
+      '$r = git commit --no-verify -m x 2>&1',
+      '(git add -A)',
+      'Write-Output $(git add -A)',
+      'if ($true) { git commit -m x }',
+      '$null = & git add -A',
+      'Start-Process git -ArgumentList \'add\',\'-A\' -Wait -NoNewWindow',
+    ]) {
+      assert.equal(kind(sh(c, KB)), 'deny', c)
+    }
+    assert.equal(kind(sh('Push-Location ~/knowledge; try { git add -A } finally { Pop-Location }')), 'deny')
+    assert.equal(kind(sh('$x = okf index .', KB)), 'deny')
+  })
+  it('checks the command inside cmd /c, pwsh -c, bash -c and iex', () => {
+    assert.equal(kind(sh('cmd /c "git add -A"', KB)), 'deny')
+    assert.equal(kind(sh('pwsh -NoProfile -Command "git -C ~/knowledge add -A"')), 'deny')
+    assert.equal(kind(sh('pwsh -c "git -C `"$env:USERPROFILE\\knowledge`" add -A"')), 'deny')
+    assert.equal(kind(sh('iex "git add -A"', KB)), 'deny')
+    assert.equal(kind(bash("bash -c 'cd ~/knowledge && git add -A'")), 'deny')
+    assert.equal(kind(bash('GIT_TRACE=1 git add -A', KB)), 'deny')
+  })
+  it('splits at a background &', () => {
+    assert.equal(kind(sh('git status & git add -A', KB)), 'deny')
+    assert.equal(kind(sh('& git status', KB)), 'allow')
+    assert.equal(kind(sh('git log 2>&1 | Out-String', KB)), 'allow')
+  })
+  it('a block anywhere beats an earlier ask', () => {
+    assert.equal(kind(sh('git push; git add -A', KB)), 'deny')
+    assert.equal(kind(sh('git push && Add-Content log.md x', KB)), 'deny')
+  })
+  it('leaves harmless uses alone', () => {
+    for (const c of ['$s = git status --short', 'Write-Output (git log -1)', 'Get-Command git', '$x = & git status', 'Write-Output "git add -A is not allowed here"']) {
+      assert.equal(kind(sh(c, KB)), 'allow', c)
+    }
+    assert.equal(kind(sh(`$out = python "$env:USERPROFILE\\knowledge\\.kb\\kb.py" commit -m 'kb: stop using git add -A' projects/a.md`, KB)), 'allow')
+  })
+})
+
+describe('review 3: commands that discard uncommitted edits ask first', () => {
+  it('asks', () => {
+    for (const c of [
+      'git checkout .',
+      'git checkout projects/a.md',
+      'git checkout -f master',
+      'git switch --discard-changes master',
+      'git switch -f master',
+      'git restore --staged --worktree projects/a.md',
+      'git restore --source HEAD~1 projects/a.md',
+    ]) {
+      assert.equal(kind(sh(c, KB)), 'ask', c)
+    }
+  })
+  it('allows branch changes and unstaging', () => {
+    for (const c of ['git checkout master', 'git checkout -b feature/new', 'git switch master', 'git restore --staged projects/a.md']) {
+      assert.equal(kind(sh(c, KB)), 'allow', c)
+    }
+  })
+})
+
+describe('review 4: history rewrites ask or are blocked', () => {
+  it('asks before moving commits', () => {
+    for (const c of [
+      'git reset HEAD~2',
+      'git reset --soft HEAD~1',
+      'git reset abc1234',
+      'git reset origin/master',
+      'git reset master',
+      'git pull --rebase',
+      'git pull -r',
+      'git branch -f master HEAD~1',
+      'git branch -D old',
+      'git checkout -B master origin/master',
+      'git switch -C master',
+    ]) {
+      assert.equal(kind(sh(c, KB)), 'ask', c)
+    }
+  })
+  it('blocks deleting remote branches', () => {
+    assert.equal(kind(sh('git push --prune', KB)), 'deny')
+    assert.equal(kind(sh('git push origin :old-branch', KB)), 'deny')
+  })
+  it('allows unstaging and plain pulls', () => {
+    for (const c of ['git reset', 'git reset HEAD', 'git reset projects/a.md', 'git reset HEAD projects/a.md', 'git pull', 'git pull --rebase=false', 'git branch -d merged', 'git branch new-branch']) {
+      assert.equal(kind(sh(c, KB)), 'allow', c)
+    }
+  })
+})
+
+describe('review 5: commands that commit without the check ask first', () => {
+  it('asks', () => {
+    for (const c of ['git cherry-pick abc1234', 'git revert HEAD', 'git am fix.patch', 'git merge feature', 'git cherry-pick --continue']) {
+      assert.equal(kind(sh(c, KB)), 'ask', c)
+    }
+    assert.match(sh('git merge feature', KB).reason, /kb\.py" check/)
+  })
+  it('allows aborts and fast-forwards', () => {
+    for (const c of ['git merge --abort', 'git cherry-pick --abort', 'git revert --quit', 'git merge --ff-only origin/master']) {
+      assert.equal(kind(sh(c, KB)), 'allow', c)
+    }
+  })
+})
+
+describe('review 6: --git-dir, --work-tree and GIT_DIR', () => {
+  it('finds the knowledge base through them', () => {
+    for (const c of [
+      'git --git-dir ~/knowledge/.git --work-tree ~/knowledge add -A',
+      'git --git-dir=$env:USERPROFILE/knowledge/.git add -A',
+      'git --work-tree=~/knowledge --git-dir=~/knowledge/.git commit -m x',
+      '$env:GIT_DIR = "$env:USERPROFILE\\knowledge\\.git"; git add -A',
+    ]) {
+      assert.equal(kind(sh(c)), 'deny', c)
+    }
+    assert.equal(kind(bash('GIT_DIR=~/knowledge/.git GIT_WORK_TREE=~/knowledge git add -A')), 'deny')
+    assert.equal(kind(bash('export GIT_DIR=~/knowledge/.git; git add -A')), 'deny')
+  })
+  it('leaves other repos alone', () => {
+    assert.equal(kind(sh('git --git-dir ~/other/.git add -A')), 'allow')
+    assert.equal(kind(sh('git --work-tree ~/knowledge status')), 'allow')
+    assert.equal(kind(sh('$env:GIT_DIR = "$env:USERPROFILE\\knowledge\\.git"; Remove-Item Env:GIT_DIR; git add -A')), 'allow')
+  })
+})
+
+describe('review 7: relative paths from another folder', () => {
+  it('checks them', () => {
+    assert.equal(kind(sh("Add-Content ..\\knowledge\\log.md '* x'", DOCS)), 'deny')
+    assert.equal(kind(sh("Set-Content ../knowledge/.githooks/pre-commit 'exit 0'", DOCS)), 'deny')
+    assert.equal(kind(sh('"x" > ..\\knowledge\\log.md', DOCS)), 'deny')
+  })
+})
+
+if (WIN) {
+  describe('review 8: a knowledge base set with the short home path', () => {
+    it('is still recognized, and the prompt shows no short name', () => {
+      const g = createGuard({ knowledgeRoot: 'C:\\Users\\TESTPE~1\\knowledge' }, env)
+      const d = g.decide({ name: 'pwsh', arguments: { command: 'git -C ~/knowledge add -A' }, agent: { session: { header: { cwd: OTHER } } } })
+      assert.equal(kind(d), 'deny')
+      assert.match(g.promptText(), /%USERPROFILE%\\knowledge/)
+      assert.doesNotMatch(g.promptText(), /TESTPE~1/i)
+    })
+    it('learns the short path through update()', () => {
+      const g = createGuard({}, { ...env, shortHome: undefined })
+      const call = { name: 'pwsh', arguments: { command: 'git -C C:\\Users\\TESTPE~1\\knowledge add -A' }, agent: { session: { header: { cwd: OTHER } } } }
+      assert.equal(kind(g.decide(call)), 'allow')
+      g.update({ shortHome: SHORT })
+      assert.equal(kind(g.decide(call)), 'deny')
+    })
+  })
+}
+
+describe('review 10: folders next to the knowledge base', () => {
+  it('are not the knowledge base', () => {
+    assert.equal(kind(sh('okf index ~/knowledge-archive')), 'allow')
+    assert.equal(kind(sh('Add-Content ~/knowledge-old/log.md x')), 'allow')
+    assert.equal(kind(sh('git -C ~/knowledge2 add -A')), 'allow')
+  })
+})
+
+describe('review 11: pushd and popd', () => {
+  it('popd returns to the earlier folder', () => {
+    assert.equal(kind(sh('pushd ~/knowledge; git log -1; popd; git add -A')), 'allow')
+    assert.equal(kind(sh('Push-Location ~/knowledge; Pop-Location; git add -A')), 'allow')
+  })
+})
+
+describe('review 12: copy and move', () => {
+  it('copying a protected file out is a read', () => {
+    assert.equal(kind(sh('Copy-Item ~/knowledge/log.md C:\\tmp\\log.md')), 'allow')
+    assert.equal(kind(sh('cp ~/knowledge/log.md /tmp/log.md')), 'allow')
+    assert.equal(kind(sh('Copy-Item -Path ~/knowledge/log.md -Destination C:\\tmp')), 'allow')
+  })
+  it('copying onto or moving a protected file is a write', () => {
+    for (const c of [
+      'Copy-Item C:\\tmp\\x.md ~/knowledge/log.md',
+      'cp x.py ~/knowledge/.kb/kb.py',
+      'Move-Item ~/knowledge/log.md C:\\tmp\\',
+      'Copy-Item -Destination ~/knowledge/.githooks -Path C:\\tmp\\pre-commit',
+    ]) {
+      assert.equal(kind(sh(c)), 'deny', c)
+    }
+  })
+  it('a verb used as a search word is not a write', () => {
+    assert.equal(kind(sh('Select-String -Pattern "del" log.md', KB)), 'allow')
+    assert.equal(kind(sh('Get-Content log.md | Select-String copy', KB)), 'allow')
+  })
+})
+
+describe('review 13: account name in shell writes', () => {
+  it('blocks text with the name written into the knowledge base', () => {
+    for (const [c, cwd] of [
+      ["Add-Content ~/knowledge/projects/a.md 'see C:\\Users\\Test Person\\repo'", OTHER],
+      ['"C:\\Users\\Test Person\\x" > projects/a.md', KB],
+      ["Set-Content -Path $env:USERPROFILE\\knowledge\\projects\\a.md -Value 'TESTPE~1'", OTHER],
+      ['[IO.File]::WriteAllText("$env:USERPROFILE\\knowledge\\projects\\a.md", "Test Person")', OTHER],
+    ]) {
+      const d = sh(c, cwd)
+      assert.equal(kind(d), 'deny', c)
+      assert.match(d.reason, /account name/)
+    }
+  })
+  it('ignores the name in the target path and outside the knowledge base', () => {
+    for (const c of [
+      'Set-Content "C:\\Users\\Test Person\\knowledge\\projects\\a.md" "plain text"',
+      'Copy-Item "C:\\Users\\Test Person\\Downloads\\x.md" ~/knowledge/projects/',
+      'Add-Content C:\\work\\proj\\notes.md "Test Person"',
+      "Add-Content ~/knowledge/projects/a.md 'see %USERPROFILE%\\repo'",
+    ]) {
+      assert.equal(kind(sh(c)), 'allow', c)
+    }
+  })
+})
+
+describe('review 14: the name matches whole words only', () => {
+  const g = createGuard({}, { ...env, privateNames: ['ann'], shortHome: null })
+  const edit = (text) =>
+    g.decide({ name: 'edit', arguments: { file_path: kb('projects', 'a', 'decisions', 'old.md'), old_string: 'a', new_string: text }, agent: { session: { header: { cwd: OTHER } } } })
+  it('does not match inside other words', () => {
+    assert.equal(kind(edit('annual review, planned work')), 'allow')
+  })
+  it('matches the name itself', () => {
+    assert.equal(kind(edit("ann's notes")), 'deny')
+    assert.equal(kind(edit('C:\\Users\\ann\\x')), 'deny')
   })
 })
