@@ -1,0 +1,2 @@
+# Keep LF on every PC, whatever core.autocrlf says.
+* text=auto eol=lf

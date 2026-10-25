@@ -1,0 +1,9 @@
+# Keeps agents on kb.py inside the OKF knowledge base. Override any field from
+# the profile's own cordis.patch.yml with an entry for id okf-guard.
+- insert:
+    - id: okf-guard
+      name: dsh-okf-guard
+      config:
+        knowledgeRoot: '~/knowledge'
+        injectPrompt: true
+        askBeforePush: true
