@@ -344,6 +344,8 @@ describe('fix 12: long commands stay cheap', () => {
       ['(git status) '.repeat(4800), KB],
       [`Add-Content ${'~/knowledge/projects/a.md '.repeat(2400)}`, OTHER],
       ['sed '.repeat(16000), KB],
+      ['$('.repeat(32000), KB],
+      [`"${'$(a) '.repeat(13000)}"`, KB],
     ]) {
       const [d, ms] = timed(() => sh(cmd, cwd))
       assert.notEqual(kind(d), 'deny')
