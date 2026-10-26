@@ -1412,8 +1412,10 @@ def cmd_commit(a):
     if run(["git", "diff", "--cached", "--quiet"])[0] == 0:
         fail("nothing is left to commit once the lines for files outside this commit are left out.")
     if not hook_installed():
-        out("note: the pre-commit hook is not installed in this clone, so kb.py runs the check itself. "
-            "(To install it: git config core.hooksPath .githooks)")
+        out("note: the pre-commit hook is not installed in this clone (or cannot run), so kb.py runs "
+            "the check itself. Agents cannot install it: tell the user to run "
+            "git config core.hooksPath .githooks in a terminal in the knowledge base, plus "
+            "chmod +x .githooks/* on macOS or Linux.")
         if do_check("staged", []) != 0:
             out("kb commit: blocked. Fix what the check says, then run the same kb.py commit again.")
             return 1

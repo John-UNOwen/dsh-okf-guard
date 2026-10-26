@@ -427,4 +427,17 @@ describe('kb.py and hooks', { skip }, () => {
       assert.match(r.out, /account name/);
     });
   });
+
+  describe('#12 hook fallback note', () => {
+    test('the note says the user installs the hook in a terminal', () => {
+      const d = clone();
+      git(d, 'config', '--unset', 'core.hooksPath');
+      newConcept(d, 'projects/app-n/notes/n.md', 'N note');
+      const r = kb(d, 'commit', '-m', 'kb: add n', 'projects/app-n/notes/n.md');
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /pre-commit hook is not installed/);
+      assert.match(r.out, /Agents cannot install it: tell the user to run git config core\.hooksPath \.githooks in a terminal/);
+      assert.match(r.out, /kb check: OK/);
+    });
+  });
 });
