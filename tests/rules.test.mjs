@@ -326,6 +326,37 @@ describe('fix 11: okf commands that name a concept by path', () => {
   })
 })
 
+describe('fix 12: long commands stay cheap', () => {
+  const timed = (fn) => {
+    const t = performance.now()
+    const d = fn()
+    return [d, performance.now() - t]
+  }
+  it('asks for a command over 64 KB, quickly', () => {
+    const [d, ms] = timed(() => sh('git status '.repeat(10000), KB))
+    assert.equal(kind(d), 'ask')
+    assert.match(d.reason, /command too long to check; split it/)
+    assert.ok(ms < 500, `${ms} ms`)
+  })
+  it('checks a long command in linear time', () => {
+    for (const [cmd, cwd] of [
+      ['git status '.repeat(5800), KB],
+      ['(git status) '.repeat(4800), KB],
+      [`Add-Content ${'~/knowledge/projects/a.md '.repeat(2400)}`, OTHER],
+      ['sed '.repeat(16000), KB],
+    ]) {
+      const [d, ms] = timed(() => sh(cmd, cwd))
+      assert.notEqual(kind(d), 'deny')
+      assert.ok(ms < 1000, `${cmd.slice(0, 20)}: ${ms} ms`)
+    }
+  })
+  it('still finds a later git command and the name in written text', () => {
+    assert.equal(kind(sh(`${'git status '.repeat(3000)}; git add -A`, KB)), 'deny')
+    assert.equal(kind(sh('(git status) (git add -A)', KB)), 'deny')
+    assert.equal(kind(sh(`Add-Content ~/knowledge/projects/a.md ~/knowledge/projects/a.md 'Test Person'`)), 'deny')
+  })
+})
+
 describe('git in the knowledge base', () => {
   it('denies git add and git commit, whichever way the folder is named', () => {
     for (const form of ['"$env:USERPROFILE\\knowledge"', '$env:USERPROFILE/knowledge', '~/knowledge', '"%USERPROFILE%\\knowledge"', `"${KB}"`]) {
