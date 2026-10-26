@@ -22,6 +22,7 @@ const sh = (command, cwd = OTHER, extra = {}) =>
   guard.decide({ name: 'pwsh', arguments: { command, ...extra }, agent: { session: { header: { cwd } } } })
 const file = (name, args, cwd = OTHER) => guard.decide({ name, arguments: args, agent: { session: { header: { cwd } } } })
 const kind = (d) => (d ? d.kind : 'allow')
+const bash = (command, cwd = OTHER) => guard.decide({ name: 'bash', arguments: { command }, agent: { session: { header: { cwd } } } })
 
 describe('command parsing', () => {
   it('splits on ; && || | and newlines, not inside quotes', () => {
@@ -30,6 +31,32 @@ describe('command parsing', () => {
   })
   it('keeps quoted words with spaces whole', () => {
     assert.deepEqual(words('git -C "C:\\Users\\Test Person\\knowledge" add -A'), ['git', '-C', 'C:\\Users\\Test Person\\knowledge', 'add', '-A'])
+  })
+  it('joins quoted and unquoted pieces that touch into one word', () => {
+    assert.deepEqual(words('Set-Content -Path "~/knowledge/"\'log.md\' -Value x'), ['Set-Content', '-Path', '~/knowledge/log.md', '-Value', 'x'])
+    assert.deepEqual(words('a"b c"d'), ['ab cd'])
+  })
+  it('reads a quote that is never closed as a character', () => {
+    assert.deepEqual(splitSegments('echo "x; git add -A'), ['echo "x', 'git add -A'])
+  })
+})
+
+describe('fix 1: quoting cannot hide a write or a git command', () => {
+  it('denies', () => {
+    for (const c of [
+      'Set-Content -Path "~/knowledge/"\'log.md\'" -Value x',
+      'Set-Content -Path "~/knowledge/"\'log.md\' -Value x',
+      'Set-Content -Path ~/knowledge/"log".md -Value x',
+      'echo "x; git -C ~/knowledge add -A',
+      "echo 'it`'; git -C ~/knowledge add -A",
+    ]) {
+      assert.equal(kind(sh(c)), 'deny', c)
+    }
+    assert.equal(kind(bash('echo \\"; git -C ~/knowledge add -A; echo \\"')), 'deny')
+  })
+  it('still keeps separators inside closed quotes', () => {
+    assert.equal(kind(sh('Write-Output "a; git add -A"', KB)), 'allow')
+    assert.equal(kind(bash('echo "a \\" b; git add -A"', KB)), 'allow')
   })
 })
 
@@ -205,7 +232,6 @@ describe('prompt section', () => {
   })
 })
 
-const bash = (command, cwd = OTHER) => guard.decide({ name: 'bash', arguments: { command }, agent: { session: { header: { cwd } } } })
 
 describe('review 1 and 9: git and okf anywhere in a command', () => {
   it('finds git behind assignments, brackets, blocks and the call operator', () => {
