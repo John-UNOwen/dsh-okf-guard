@@ -167,6 +167,48 @@ describe('fix 5: the knowledge base folder itself', () => {
   })
 })
 
+describe('fix 6: recursive deletes in the knowledge base', () => {
+  it('deny when they take protected files along', () => {
+    for (const [c, cwd] of [
+      ['rm -rf .', KB],
+      ['rm -rf *', KB],
+      ['rm -rf ~/knowledge/*', OTHER],
+      ['Remove-Item -Recurse -Force .', KB],
+      ['Remove-Item -Recurse -Force *', KB],
+      ['cd ~/knowledge; rm -rf .', OTHER],
+      ['cd ~/knowledge; Remove-Item -Recurse -Force *', OTHER],
+      ['cmd /c "rd /s /q ."', KB],
+      ['Move-Item ~/knowledge/* ~/Documents/kb-bak/', OTHER],
+      ['rm -rf .kb', KB],
+      ['rm log.md', KB],
+      ['Remove-Item -Recurse .githooks', KB],
+    ]) {
+      assert.equal(kind(sh(c, cwd)), 'deny', c)
+    }
+  })
+  it('deny for a folder that holds a log.md', () => {
+    const g = createGuard({ knowledgeRoot: '~/knowledge' }, { ...env, exists: (p) => p.toLowerCase() === kb('projects', 'log.md').toLowerCase() })
+    const d = g.decide({ name: 'pwsh', arguments: { command: 'Remove-Item -Recurse projects' }, agent: { session: { header: { cwd: KB } } } })
+    assert.equal(kind(d), 'deny')
+  })
+  it('ask for other folders and wildcards', () => {
+    for (const c of ['rm -rf projects', 'Remove-Item -Recurse -Force projects', 'rm -r projects/a', 'Remove-Item projects/a/*.md']) {
+      assert.equal(kind(sh(c, KB)), 'ask', c)
+    }
+  })
+  it('leave single files, moves into the folder and other folders alone', () => {
+    for (const [c, cwd] of [
+      ['rm projects/a.md', KB],
+      ['Remove-Item -Force projects/a.md', KB],
+      ['Move-Item C:\\tmp\\x.md .', KB],
+      ['rm -rf build', OTHER],
+      ['Remove-Item -Recurse -Force *', OTHER],
+    ]) {
+      assert.equal(kind(sh(c, cwd)), 'allow', c)
+    }
+  })
+})
+
 describe('git in the knowledge base', () => {
   it('denies git add and git commit, whichever way the folder is named', () => {
     for (const form of ['"$env:USERPROFILE\\knowledge"', '$env:USERPROFILE/knowledge', '~/knowledge', '"%USERPROFILE%\\knowledge"', `"${KB}"`]) {
