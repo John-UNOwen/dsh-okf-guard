@@ -171,14 +171,18 @@ def private_re():
         if len(n) < 3 or n.lower() in GENERIC_NAMES:
             continue
         for sep in (" ", "", "-", "_", "%20", "+"):
-            forms.add(n.replace(" ", sep))
+            f = n.replace(" ", sep)
+            if len(f) >= 3:  # "a b" joined is "ab", which is in too many words
+                forms.add(f)
     if not forms:
         # The name is too generic to search for, so look for the home path instead.
         for h in homes:
             forms.add(h)
             forms.add(h.replace("\\", "/"))
     pats = sorted((re.escape(f) for f in forms if f), key=len, reverse=True)
-    _PRIVATE.append(re.compile("|".join(pats), re.I) if pats else None)
+    # Whole words only, the same boundaries the agent guard uses.
+    _PRIVATE.append(re.compile("(?<![a-z0-9])(?:%s)(?![a-z0-9])" % "|".join(pats), re.I)
+                    if pats else None)
     return _PRIVATE[0]
 
 

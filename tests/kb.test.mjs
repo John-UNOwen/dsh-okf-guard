@@ -393,4 +393,38 @@ describe('kb.py and hooks', { skip }, () => {
       assert.match(out, /^kb: error: could not run git/);
     });
   });
+
+  describe('#10 kb.privateName forms', () => {
+    function checkMsg(d, text) {
+      write(d, 'msg.txt', text + '\n');
+      const r = kb(d, 'check-msg', file(d, 'msg.txt'));
+      return r.code;
+    }
+
+    test('names match as whole words, in their usual spellings', () => {
+      const d = clone();
+      git(d, 'config', '--add', 'kb.privateName', 'Test Person');
+      assert.equal(checkMsg(d, 'notes by Test Person'), 1);
+      assert.equal(checkMsg(d, 'see test-person/notes'), 1);
+      assert.equal(checkMsg(d, 'TestPerson wrote it'), 1);
+      assert.equal(checkMsg(d, 'for zeta.'), 1);
+      assert.equal(checkMsg(d, 'TestPersonal notes'), 0);
+      assert.equal(checkMsg(d, 'zetabeta and betazeta'), 0);
+    });
+
+    test('a value with a space never becomes a 2-letter form', () => {
+      const d = clone();
+      git(d, 'config', '--add', 'kb.privateName', 'a b');
+      assert.equal(checkMsg(d, 'Cache is available.'), 0);
+      assert.equal(checkMsg(d, 'a absent label'), 0);
+    });
+
+    test('control: kb.py new still refuses the name in a description', () => {
+      const d = clone();
+      const r = kb(d, 'new', 'projects/app-z/notes/z.md', '--type', 'Reference', '--title', 'Z note',
+        '--description', 'Set up by zeta.', '--by', 'human:test');
+      assert.equal(r.code, 2, r.out);
+      assert.match(r.out, /account name/);
+    });
+  });
 });
