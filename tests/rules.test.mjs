@@ -289,6 +289,18 @@ describe('fix 9: kb.privateName', () => {
   })
 })
 
+describe('fix 10: setup lines are for the user', () => {
+  it('the deny reasons say so', () => {
+    const hooks = sh('git -C ~/knowledge config core.hooksPath .githooks')
+    assert.equal(kind(hooks), 'deny')
+    assert.match(hooks.reason, /ask the user to run this in a terminal/)
+    assert.doesNotMatch(hooks.reason, /Test Person/)
+    const add = sh('git -C ~/knowledge add -A')
+    assert.equal(kind(add), 'deny')
+    assert.match(add.reason, /for the user to run in a terminal, not for an agent/)
+  })
+})
+
 describe('git in the knowledge base', () => {
   it('denies git add and git commit, whichever way the folder is named', () => {
     for (const form of ['"$env:USERPROFILE\\knowledge"', '$env:USERPROFILE/knowledge', '~/knowledge', '"%USERPROFILE%\\knowledge"', `"${KB}"`]) {
