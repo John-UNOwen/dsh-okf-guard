@@ -1199,8 +1199,9 @@ def cmd_check(a):
 
 
 def cmd_check_msg(a):
+    # Every line counts, '#' lines too: git keeps them in a -m or -F message. Only the diff that
+    # commit -v puts below the scissors line is cut off.
     text = re.split(r"(?m)^# -+ >8 -+$", read_text(a.file))[0]
-    text = "\n".join(l for l in text.split("\n") if not l.startswith("#"))
     if has_private(text):
         out("BLOCK commit message: it contains the Windows account name or the user folder. "
             "Write %USERPROFILE% or ~ instead.")

@@ -329,4 +329,28 @@ describe('kb.py and hooks', { skip }, () => {
       assert.match(r.out, /BLOCK log\.md: a new line links to \/projects\/app-h\/notes\/h\.md, which is not in this commit/);
     });
   });
+
+  describe('#17 commit messages with # lines', () => {
+    test('a -m line that starts with "# " is checked', () => {
+      const d = clone();
+      const head = git(d, 'rev-parse', 'HEAD').out;
+      const r = gitCommit(d, '--allow-empty', '-m', '# tuning for zeta');
+      assert.notEqual(r.code, 0, r.out);
+      assert.match(r.out, /BLOCK commit message/);
+      assert.equal(git(d, 'rev-parse', 'HEAD').out, head);
+    });
+
+    test('a "# " line in a later paragraph is checked', () => {
+      const d = clone();
+      const r = gitCommit(d, '--allow-empty', '-m', 'kb: tune', '-m', '# notes from zeta');
+      assert.notEqual(r.code, 0, r.out);
+      assert.match(r.out, /BLOCK commit message/);
+    });
+
+    test('control: a "# " line without the name commits', () => {
+      const d = clone();
+      const r = gitCommit(d, '--allow-empty', '-m', '# tuning for the cache');
+      assert.equal(r.code, 0, r.out);
+    });
+  });
 });
