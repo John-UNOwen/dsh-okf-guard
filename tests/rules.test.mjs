@@ -60,6 +60,29 @@ describe('fix 1: quoting cannot hide a write or a git command', () => {
   })
 })
 
+describe('fix 2: command substitutions are checked', () => {
+  it('denies git and writes inside $( ) and backticks', () => {
+    for (const c of [
+      'echo "built $(date +%d); git -C ~/knowledge commit -m x"',
+      'Write-Host "x $(git -C ~/knowledge commit -m x)"',
+      'Write-Host "x $(git -C "~/knowledge" commit -m "y") z"',
+      'Write-Output $(cd ~/knowledge; git add -A)',
+      'cd $(git -C ~/knowledge commit -m x)',
+      `python "$env:USERPROFILE\\knowledge\\.kb\\kb.py" check "$(git -C ~/knowledge add -A)"`,
+    ]) {
+      assert.equal(kind(sh(c)), 'deny', c)
+    }
+    assert.equal(kind(bash('echo "note `git -C ~/knowledge commit -m x`"')), 'deny')
+    assert.equal(kind(bash('echo `git -C ~/knowledge add -A`')), 'deny')
+    assert.equal(kind(bash('echo "built `date +%d`"; git -C ~/knowledge commit -m x')), 'deny')
+  })
+  it('leaves harmless substitutions alone', () => {
+    assert.equal(kind(sh('Write-Host "done in $(Get-Date)"', KB)), 'allow')
+    assert.equal(kind(bash('echo "today `date +%d`"', KB)), 'allow')
+    assert.equal(kind(sh('$x = "git $(git --version)"', KB)), 'allow')
+  })
+})
+
 describe('git in the knowledge base', () => {
   it('denies git add and git commit, whichever way the folder is named', () => {
     for (const form of ['"$env:USERPROFILE\\knowledge"', '$env:USERPROFILE/knowledge', '~/knowledge', '"%USERPROFILE%\\knowledge"', `"${KB}"`]) {
