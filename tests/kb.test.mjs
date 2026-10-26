@@ -109,7 +109,8 @@ function commitNew(d, ...rels) {
 }
 
 function dropLines(d, rel, needle) {
-  write(d, rel, read(d, rel).split('\n').filter((l) => !l.includes(needle)).join('\n'));
+  const lines = read(d, rel).split('\n').filter((l) => !l.includes(needle));
+  write(d, rel, lines.join('\n').trimEnd() + '\n');
 }
 
 describe('kb.py and hooks', { skip }, () => {
@@ -214,5 +215,33 @@ describe('kb.py and hooks', { skip }, () => {
         assert.match(r.out, /pre-commit hook is not installed/);
         assert.match(r.out, /TODO\(kb\) placeholder/);
       });
+  });
+
+  describe('#14 deleted folder indexes', () => {
+    test('kb.py commit records deleted folder indexes as deletions', () => {
+      const d = clone();
+      newConcept(d, 'projects/app-b/notes/b.md', 'B note');
+      commitNew(d, 'projects/app-b/notes/b.md');
+      rm(d, 'projects/app-b/notes/b.md', 'projects/app-b/notes/index.md', 'projects/app-b/index.md');
+      dropLines(d, 'projects/index.md', 'app-b');
+      const r = kb(d, 'commit', '-m', 'kb: drop app-b note b', 'projects/app-b/notes/b.md');
+      assert.equal(r.code, 0, r.out);
+      const tree = headTree(d);
+      assert.ok(!tree.some((p) => p.startsWith('projects/app-b/')), tree.join('\n'));
+      assert.doesNotMatch(headFile(d, 'projects/index.md'), /app-b/);
+      assert.deepEqual(status(d), []);
+    });
+
+    test('a deleted folder index is still blocked while its folder keeps a concept', () => {
+      const d = clone();
+      newConcept(d, 'projects/app-b/notes/b1.md', 'B1 note');
+      newConcept(d, 'projects/app-b/notes/b2.md', 'B2 note');
+      commitNew(d, 'projects/app-b/notes/b1.md', 'projects/app-b/notes/b2.md');
+      rm(d, 'projects/app-b/notes/b1.md', 'projects/app-b/notes/index.md');
+      const r = kb(d, 'commit', '-m', 'kb: drop b1', 'projects/app-b/notes/b1.md');
+      assert.notEqual(r.code, 0, r.out);
+      assert.match(r.out, /BLOCK projects\/app-b\/notes\/index\.md: its folder still has projects\/app-b\/notes\/b2\.md/);
+      assert.ok(headTree(d).includes('projects/app-b/notes/index.md'));
+    });
   });
 });

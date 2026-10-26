@@ -1321,8 +1321,14 @@ def cmd_commit(a):
     heads = cat_blobs(["%s:%s" % (base, p) for p in auto])
     paths, partial = list(rels), []
     for p in auto:
+        if not (ROOT / p).exists():
+            # Deleted in the working tree: record the deletion. Staging a blank blob would leave
+            # an empty index in HEAD and the deletion uncommitted. The check decides if it may go.
+            git("update-index", "--force-remove", "--", p)
+            paths.append(p)
+            continue
         head_text = text_of(heads.get("%s:%s" % (base, p))) or ""
-        work_text = read_text(ROOT / p) if (ROOT / p).exists() else ""
+        work_text = read_text(ROOT / p)
         if p == "log.md":
             text = partial_log(head_text, work_text, keep)
         else:
