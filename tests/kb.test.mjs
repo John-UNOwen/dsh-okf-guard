@@ -244,4 +244,50 @@ describe('kb.py and hooks', { skip }, () => {
       assert.ok(headTree(d).includes('projects/app-b/notes/index.md'));
     });
   });
+
+  describe('#15 index lines in partial commits', () => {
+    const t1 = 'projects/app-t/notes/t1.md';
+    const t2 = 'projects/app-t/notes/t2.md';
+    const idx = 'projects/app-t/notes/index.md';
+    function twoNotes() {
+      const d = clone();
+      newConcept(d, t1, 'T1');
+      newConcept(d, t2, 'T2');
+      commitNew(d, t1, t2);
+      return d;
+    }
+
+    test('a line for a concept outside the commit keeps its HEAD state', () => {
+      const d = twoNotes();
+      fs.appendFileSync(file(d, t1), '\nMore.\n');
+      rm(d, t2);
+      dropLines(d, idx, '/t2.md');
+      assert.equal(kb(d, 'touch', t1, '--note', 'expand t1').code, 0);
+      const r = kb(d, 'commit', '-m', 'kb: expand t1', t1);
+      assert.equal(r.code, 0, r.out);
+      assert.ok(headTree(d).includes(t2));
+      assert.match(headFile(d, idx), /\/projects\/app-t\/notes\/t2\.md/);
+    });
+
+    test('a line for a concept removed in the commit goes with it', () => {
+      const d = twoNotes();
+      rm(d, t2);
+      dropLines(d, idx, '/t2.md');
+      const r = kb(d, 'commit', '-m', 'kb: drop t2', t2);
+      assert.equal(r.code, 0, r.out);
+      assert.ok(!headTree(d).includes(t2));
+      assert.doesNotMatch(headFile(d, idx), /t2\.md/);
+      assert.match(headFile(d, idx), /t1\.md/);
+    });
+
+    test('the check blocks an index line removed for a concept that stays', () => {
+      const d = twoNotes();
+      dropLines(d, idx, '/t2.md');
+      git(d, 'add', idx);
+      const r = gitCommit(d, '-m', 'kb: unlist t2');
+      assert.notEqual(r.code, 0, r.out);
+      assert.match(r.out, /BLOCK projects\/app-t\/notes\/index\.md: no longer lists \/projects\/app-t\/notes\/t2\.md/);
+      assert.doesNotMatch(r.out, /not from this change/);
+    });
+  });
 });

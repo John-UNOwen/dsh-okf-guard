@@ -23,6 +23,7 @@ Standard library only. Files are written as UTF-8 without a BOM, with LF endings
 import argparse
 import collections
 import datetime as dt
+import difflib
 import json
 import os
 import re
@@ -1044,6 +1045,7 @@ def do_check(mode, files):
         new_log = text_of(new_content("log.md")) or ""
         new_log_lines = [l for l in new_log.split("\n") if l not in head_log_lines and LOG_LINE_RE.match(l.strip())]
 
+        index_dropped = set()
         for p, (st, data) in sorted(touched.items()):
             if not p.endswith(".md"):
                 continue
@@ -1098,6 +1100,17 @@ def do_check(mode, files):
                     warn(p, "older duplicate day headings, not from this change: %s." % ", ".join(old_dups))
                 continue
             if name == "index.md":
+                # A line removed here for a file that stays leaves that file unlisted.
+                old_lines = (text_of(old_blobs.get("%s:%s" % (base, old_of.get(p, p)))) or "").split("\n")
+                new_set = set(text.split("\n"))
+                for l in old_lines:
+                    if l in new_set:
+                        continue
+                    for t in LINK_TARGET_RE.findall(l):
+                        if exists_now(t) and "](/%s)" % t not in text:
+                            index_dropped.add((p, concept_id(t)))
+                            block(p, "no longer lists /%s, which stays in the knowledge base. Put the "
+                                     "line back, or delete that file in the same commit." % t)
                 continue
             lines = text.split("\n")
             end = fm_end(lines)
@@ -1136,7 +1149,7 @@ def do_check(mode, files):
                     if cid in touched_ids:
                         block(cid + ".md", "is not listed in %s. Add a line like: "
                                            "- [Title](/%s.md) - description" % (p, cid))
-                    elif p in touched:
+                    elif p in touched and (p, cid) not in index_dropped:
                         warn(p, "does not list %s.md (not from this change)." % cid)
                 for cid in (listed.group(1).split(", ") if listed else []):
                     added = "\n".join(l for _, l in added_lines.get(p, []))
@@ -1250,16 +1263,25 @@ def partial_log(head_text, work_text, keep):
     return "\n".join(lines) + "\n"
 
 
-def partial_index(head_text, work_text, keep, head_paths):
-    """An index as committed: drop new lines that link to files this commit leaves out."""
-    head_set = set(head_text.split("\n")) if head_text else set()
-    kept = []
-    for l in work_text.rstrip("\n").split("\n"):
-        if l not in head_set and any(t not in keep and t not in head_paths
-                                     for t in LINK_TARGET_RE.findall(l)):
+def partial_index(head_text, work_text, keep):
+    """An index as committed. A line that links only to files outside this commit keeps its HEAD
+    state: it is not added, changed or removed here. Lines that link to a file in this commit
+    (including a removed file, whose line goes) and lines without links come from the working file."""
+    head = head_text.rstrip("\n").split("\n") if head_text else []
+    work = work_text.rstrip("\n").split("\n")
+
+    def ours(l):
+        targets = LINK_TARGET_RE.findall(l)
+        return not targets or any(t in keep for t in targets)
+
+    res = []
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, head, work, autojunk=False).get_opcodes():
+        if op == "equal":
+            res += head[i1:i2]
             continue
-        kept.append(l)
-    return "\n".join(kept) + "\n"
+        res += [l for l in head[i1:i2] if not ours(l)]
+        res += [l for l in work[j1:j2] if ours(l)]
+    return "\n".join(res) + "\n"
 
 
 def stage_text(rel, text):
@@ -1332,7 +1354,7 @@ def cmd_commit(a):
         if p == "log.md":
             text = partial_log(head_text, work_text, keep)
         else:
-            text = partial_index(head_text, work_text, keep, head_paths)
+            text = partial_index(head_text, work_text, keep)
         if text == (head_text.rstrip("\n") + "\n" if head_text else "\n"):
             continue
         stage_text(p, text)
