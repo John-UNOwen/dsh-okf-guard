@@ -143,6 +143,30 @@ describe('fix 4: ( ) groups as path values', () => {
   })
 })
 
+describe('fix 5: the knowledge base folder itself', () => {
+  it('cannot be deleted, moved or renamed', () => {
+    for (const c of [
+      'Remove-Item ~/knowledge -Recurse -Force',
+      'Remove-Item ~\\knowledge\\ -Recurse',
+      'Remove-Item -Recurse -Force "$env:USERPROFILE\\knowledge"',
+      'Move-Item ~/knowledge ~/knowledge.bak',
+      'Rename-Item ~/knowledge knowledge-old',
+      'rm -rf ~/knowledge',
+      '[IO.Directory]::Delete("$env:USERPROFILE\\knowledge", $true)',
+    ]) {
+      const d = sh(c)
+      assert.equal(kind(d), 'deny', c)
+      assert.match(d.reason, /folder itself/, c)
+    }
+    assert.equal(kind(file('write', { file_path: KB, content: 'x' })), 'deny')
+  })
+  it('copying into it and naming it in text are fine', () => {
+    assert.equal(kind(sh(`Copy-Item -Recurse C:\\tmp\\template\\* ${KB}`)), 'allow')
+    assert.equal(kind(sh("Set-Content ~/knowledge/projects/a.md -Value '%USERPROFILE%\\knowledge'")), 'allow')
+    assert.equal(kind(sh('Get-ChildItem ~/knowledge')), 'allow')
+  })
+})
+
 describe('git in the knowledge base', () => {
   it('denies git add and git commit, whichever way the folder is named', () => {
     for (const form of ['"$env:USERPROFILE\\knowledge"', '$env:USERPROFILE/knowledge', '~/knowledge', '"%USERPROFILE%\\knowledge"', `"${KB}"`]) {
