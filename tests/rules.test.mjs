@@ -301,6 +301,31 @@ describe('fix 10: setup lines are for the user', () => {
   })
 })
 
+describe('fix 11: okf commands that name a concept by path', () => {
+  const old = kb('projects', 'a', 'decisions', 'old.md')
+  it('are checked from any folder', () => {
+    for (const c of [
+      `okf rm "${old}" --force`,
+      `okf mv "${old}" C:\\tmp\\y.md`,
+      `okf merge "${old}" projects/a/decisions/new.md`,
+      `okf split "${old}"`,
+      `okf rename "${old}" new-name`,
+      `okf delete "${old}"`,
+      `okf merge-concepts "${old}" x`,
+      `okf studio "${KB}"`,
+      'okf rm ~/knowledge/projects/a/decisions/old.md',
+    ]) {
+      assert.equal(kind(sh(c, OTHER)), 'deny', c)
+    }
+    assert.equal(kind(sh(`okf rm "${old}" --no-index --no-log`, OTHER)), 'ask')
+  })
+  it('leave other bundles alone', () => {
+    assert.equal(kind(sh('okf rm C:\\other\\x.md', OTHER)), 'allow')
+    assert.equal(kind(sh('okf rm projects/a/x', OTHER)), 'allow')
+    assert.equal(kind(sh(`okf rm "${old}" --dry-run`, OTHER)), 'allow')
+  })
+})
+
 describe('git in the knowledge base', () => {
   it('denies git add and git commit, whichever way the folder is named', () => {
     for (const form of ['"$env:USERPROFILE\\knowledge"', '$env:USERPROFILE/knowledge', '~/knowledge', '"%USERPROFILE%\\knowledge"', `"${KB}"`]) {
