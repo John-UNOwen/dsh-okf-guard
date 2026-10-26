@@ -64,11 +64,14 @@ git -C $kb init -b main
 git -C $kb config core.hooksPath .githooks
 python "$kb\.kb\kb.py" log Created index.md 'knowledge base'
 git -C $kb add -A
+git -C $kb update-index --chmod=+x .githooks/pre-commit .githooks/commit-msg
 git -C $kb commit -m "kb: start the knowledge base"
 ```
 
 The `log` line writes the first dated entry in `log.md`, which okf requires.
-On macOS or Linux, use `~/knowledge`, `python3`, and run
+The `update-index` line records the hooks as executable. Without it, clones on
+macOS and Linux get them as plain files, and git skips them without a word.
+On macOS or Linux, use `~/knowledge` and `python3`, and run
 `chmod +x ~/knowledge/.githooks/*` before the first commit.
 
 Then try it:

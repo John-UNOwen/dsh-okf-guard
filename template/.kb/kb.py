@@ -1214,7 +1214,11 @@ def hook_installed():
         same = hp_path.resolve() == (ROOT / ".githooks").resolve()
     except OSError:
         same = False
-    return same and (ROOT / ".githooks" / "pre-commit").is_file()
+    hook = ROOT / ".githooks" / "pre-commit"
+    if not (same and hook.is_file()):
+        return False
+    # git skips a hook it cannot execute (a clone of a Windows-made repo can hold mode 100644).
+    return os.name == "nt" or os.access(str(hook), os.X_OK)
 
 
 LINK_TARGET_RE = re.compile(r"\]\(/([^)\s#]+)")

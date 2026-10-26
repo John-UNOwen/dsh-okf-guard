@@ -172,4 +172,47 @@ describe('kb.py and hooks', { skip }, () => {
       assert.ok(!headTree(d).includes('projects/app-m/notes/m2.md'));
     });
   });
+
+  describe('#13 runnable hooks', () => {
+    test('the setup records both hooks as executable', () => {
+      const modes = git(base, 'ls-files', '-s', '.githooks').out;
+      assert.match(modes, /^100755 \S+ 0\t\.githooks\/commit-msg$/m);
+      assert.match(modes, /^100755 \S+ 0\t\.githooks\/pre-commit$/m);
+    });
+
+    test('the README setup marks the hooks executable before the first commit', () => {
+      const readme = fs.readFileSync(path.join(repo, 'README.md'), 'utf8');
+      const chmod = readme.indexOf('update-index --chmod=+x .githooks/pre-commit .githooks/commit-msg');
+      const first = readme.indexOf('commit -m "kb: start the knowledge base"');
+      assert.ok(chmod > 0 && first > chmod);
+    });
+
+    test('hook_installed() needs an executable hook outside Windows', () => {
+      const d = clone();
+      const code = [
+        'import importlib.util, os, sys, types',
+        'spec = importlib.util.spec_from_file_location("kb", sys.argv[1])',
+        'kb = importlib.util.module_from_spec(spec); spec.loader.exec_module(kb)',
+        'res = [kb.hook_installed()]',
+        'for ok in (False, True):',
+        '    kb.os = types.SimpleNamespace(name="posix", X_OK=os.X_OK, access=lambda p, m, ok=ok: ok)',
+        '    res.append(kb.hook_installed())',
+        'print(res)',
+      ].join('\n');
+      const r = run(d, PY, ['-c', code, file(d, '.kb/kb.py')]);
+      assert.equal(r.out.trim(), '[True, False, True]', r.out);
+    });
+
+    test('kb.py commit runs the check itself when the hook is not executable',
+      { skip: isWin && 'git for Windows runs hooks whatever their mode' }, () => {
+        const d = clone();
+        fs.chmodSync(file(d, '.githooks/pre-commit'), 0o644);
+        newConcept(d, 'projects/app-e/notes/e.md', 'E note');
+        fs.appendFileSync(file(d, 'projects/app-e/notes/e.md'), '\nTODO(kb) draft\n');
+        const r = kb(d, 'commit', '-m', 'kb: add e', 'projects/app-e/notes/e.md');
+        assert.notEqual(r.code, 0, r.out);
+        assert.match(r.out, /pre-commit hook is not installed/);
+        assert.match(r.out, /TODO\(kb\) placeholder/);
+      });
+  });
 });
