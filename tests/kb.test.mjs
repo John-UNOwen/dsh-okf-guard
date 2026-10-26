@@ -353,4 +353,27 @@ describe('kb.py and hooks', { skip }, () => {
       assert.equal(r.code, 0, r.out);
     });
   });
+
+  describe('#18 check with a folder', () => {
+    test('a folder, a subfolder and . check the changed files under them', () => {
+      const d = clone();
+      newConcept(d, 'projects/app-d/notes/d.md', 'D note');
+      commitNew(d, 'projects/app-d/notes/d.md');
+      fs.appendFileSync(file(d, 'projects/app-d/notes/d.md'), '\nTODO(kb) draft\n');
+      for (const arg of ['projects/app-d', 'projects/app-d/notes/', '.', file(d, 'projects')]) {
+        const r = kb(d, 'check', arg);
+        assert.equal(r.code, 1, `${arg}: ${r.out}`);
+        assert.match(r.out, /BLOCK projects\/app-d\/notes\/d\.md: still has TODO\(kb\) placeholder/, arg);
+      }
+    });
+
+    test('an unchanged folder that exists has nothing to check', () => {
+      const d = clone();
+      newConcept(d, 'projects/app-a/notes/a.md', 'A note');
+      commitNew(d, 'projects/app-a/notes/a.md');
+      const r = kb(d, 'check', 'projects/app-a');
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /nothing to check/);
+    });
+  });
 });

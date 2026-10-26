@@ -215,8 +215,8 @@ def write_text(path, text):
     Path(path).write_bytes(text.encode("utf-8"))
 
 
-def norm_rel(p, must_exist=False):
-    """A path relative to the root, with forward slashes."""
+def norm_rel(p, must_exist=False, folder_ok=False):
+    """A path relative to the root, with forward slashes. With folder_ok, the root itself is ""."""
     s = p.strip().strip('"').strip("'")
     if s.startswith("~") or "%" in s:
         s = os.path.expandvars(os.path.expanduser(s))
@@ -242,6 +242,8 @@ def norm_rel(p, must_exist=False):
                 except ValueError:
                     pass
     parts = PurePosixPath(s).parts
+    if not parts and folder_ok:
+        return ""
     if not parts or ".." in parts or parts[0] == ".git":
         fail("bad path: %s" % mask(p))
     if must_exist and not (ROOT / s).exists():
@@ -917,20 +919,36 @@ def do_check(mode, files):
             for p in sorted(unmerged):
                 block(p, "has an unresolved merge conflict.")
         else:
+            def tree_changes():
+                res = parse_name_status(git("diff", "--name-status", "-z", "-M", base))
+                for p in dec(git("ls-files", "--others", "--exclude-standard", "-z")).split("\0"):
+                    if p:
+                        res.append(("A", p, None))
+                return res
+
             if files:
-                changes = []
+                changes, seen, all_changes = [], set(), None
                 for f in files:
-                    rel = norm_rel(f)
+                    rel = norm_rel(f, folder_ok=True)
+                    if rel == "" or (ROOT / rel).is_dir():
+                        # A folder stands for the changed files under it.
+                        if all_changes is None:
+                            all_changes = tree_changes()
+                        pre = rel + "/" if rel else ""
+                        for c in all_changes:
+                            if (c[1].startswith(pre) or (c[2] or "").startswith(pre)) and c[1] not in seen:
+                                seen.add(c[1])
+                                changes.append(c)
+                        continue
                     in_head = cat_blobs(["%s:%s" % (base, rel)]).get("%s:%s" % (base, rel)) is not None
                     exists = (ROOT / rel).is_file()
                     if not in_head and not exists:
                         fail("%s does not exist." % rel)
-                    changes.append(("D" if not exists else ("M" if in_head else "A"), rel, None))
+                    if rel not in seen:
+                        seen.add(rel)
+                        changes.append(("D" if not exists else ("M" if in_head else "A"), rel, None))
             else:
-                changes = parse_name_status(git("diff", "--name-status", "-z", "-M", base))
-                for p in dec(git("ls-files", "--others", "--exclude-standard", "-z")).split("\0"):
-                    if p:
-                        changes.append(("A", p, None))
+                changes = tree_changes()
             tree = ROOT
 
             def new_content(p):
