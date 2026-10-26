@@ -376,4 +376,21 @@ describe('kb.py and hooks', { skip }, () => {
       assert.match(r.out, /nothing to check/);
     });
   });
+
+  describe('#21 git missing', () => {
+    test('kb.py prints one error line, not a traceback', () => {
+      const d = clone();
+      const exe = run(d, PY, ['-c', 'import sys; print(sys.executable)']).out.trim();
+      const noGit = { ...env };
+      for (const k of Object.keys(noGit)) if (/^path$/i.test(k)) delete noGit[k];
+      noGit.PATH = path.dirname(exe);
+      const r = spawnSync(exe, [file(d, '.kb/kb.py'), 'check'], { cwd: d, encoding: 'utf8', env: noGit });
+      const out = (r.stdout || '') + (r.stderr || '');
+      if (/kb check:/.test(out)) return; // git sits next to python here, so it cannot be hidden
+      assert.equal(r.status, 2, out);
+      assert.doesNotMatch(out, /Traceback/);
+      assert.equal(out.trim().split('\n').length, 1, out);
+      assert.match(out, /^kb: error: could not run git/);
+    });
+  });
 });

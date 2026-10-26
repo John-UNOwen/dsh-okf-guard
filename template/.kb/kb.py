@@ -149,7 +149,11 @@ def private_re():
             names.add(v)
     # Optional, for commits made where the name cannot be worked out (another PC, a container):
     # git config kb.privateName "<name>" in this clone's own .git/config, which is never committed.
-    code, so, _ = run(["git", "config", "--get-all", "kb.privateName"])
+    # Never raise here: mask() calls this while an error (like git missing) is being reported.
+    try:
+        code, so, _ = run(["git", "config", "--get-all", "kb.privateName"])
+    except KbError:
+        code, so = 1, b""
     if code == 0:
         names.update(v.strip() for v in dec(so).splitlines() if v.strip())
     for h in (os.environ.get("USERPROFILE", ""), str(Path.home())):
@@ -1486,7 +1490,13 @@ def main(argv=None):
     try:
         return a.fn(a)
     except KbError as e:
-        out("kb: error: %s" % mask(str(e)))
+        lines = [l.strip() for l in str(e).splitlines() if l.strip()] or ["unknown error"]
+        msg = lines[0] + (" (and %d more line(s))" % (len(lines) - 1) if len(lines) > 1 else "")
+        try:
+            msg = mask(msg)
+        except Exception:
+            msg = "the error text could not be checked for the account name, so it is not shown."
+        out("kb: error: %s" % msg)
         return 2
 
 
