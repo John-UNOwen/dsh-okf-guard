@@ -102,6 +102,47 @@ describe('fix 3: line continuations', () => {
   })
 })
 
+describe('fix 4: ( ) groups as path values', () => {
+  it('reads literal and Join-Path groups', () => {
+    for (const c of [
+      'git -C (Join-Path $env:USERPROFILE knowledge) commit -m x',
+      'git -C ("$env:USERPROFILE\\knowledge") commit -m x',
+      'git -C ( "$env:USERPROFILE\\knowledge" ) add -A',
+      'git -C (Get-Item ~/knowledge).FullName commit -m x',
+      'git -C ("$env:USERPROFILE\\knowledge") config core.hooksPath .nohooks',
+      'Set-Location (Join-Path $env:USERPROFILE knowledge); git commit -m x',
+      'Add-Content -Path (Join-Path $env:USERPROFILE "knowledge\\log.md") -Value "x"',
+      'git -C (\n  "$env:USERPROFILE\\knowledge") commit -m x',
+    ]) {
+      assert.equal(kind(sh(c)), 'deny', c)
+    }
+    assert.equal(kind(sh('git -C ("$env:USERPROFILE\\knowledge") push')), 'ask')
+  })
+  it('asks when the group cannot be read', () => {
+    for (const c of [
+      'git -C (Get-KbPath) commit -m x',
+      'git -C $(Get-KbPath) push --force',
+      'Set-Location (Get-KbPath); git add -A',
+      'Add-Content -Path (Get-KbPath) -Value x',
+      'Set-Location (Get-KbPath); Remove-Item log.md',
+    ]) {
+      assert.equal(kind(sh(c)), 'ask', c)
+    }
+  })
+  it('leaves reads and other folders alone', () => {
+    for (const c of [
+      'git -C (Get-KbPath) status',
+      'git -C (Join-Path C:\\work proj) commit -m x',
+      'Set-Location (Get-KbPath); git log -1',
+      'Add-Content -Path x.txt -Value (Get-Date)',
+      'Write-Output (git log -1)',
+      'Copy-Item (Join-Path ~/knowledge log.md) C:\\tmp\\x.md',
+    ]) {
+      assert.equal(kind(sh(c)), 'allow', c)
+    }
+  })
+})
+
 describe('git in the knowledge base', () => {
   it('denies git add and git commit, whichever way the folder is named', () => {
     for (const form of ['"$env:USERPROFILE\\knowledge"', '$env:USERPROFILE/knowledge', '~/knowledge', '"%USERPROFILE%\\knowledge"', `"${KB}"`]) {
