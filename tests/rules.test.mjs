@@ -209,6 +209,27 @@ describe('fix 6: recursive deletes in the knowledge base', () => {
   })
 })
 
+describe('fix 7: git commands that change files without a commit', () => {
+  it('deny git mv of protected paths', () => {
+    for (const c of ['git mv .githooks/pre-commit .githooks/old', 'git mv log.md notes/log.md', 'git mv .kb/kb.py .kb/kb2.py', 'git mv .gitattributes x', 'git mv -- projects/a.md .kb/a.md']) {
+      assert.equal(kind(sh(c, KB)), 'deny', c)
+    }
+    assert.equal(kind(sh('bash -c "git mv .githooks/pre-commit .githooks/old"', KB)), 'deny')
+    assert.equal(kind(sh('git -C ~/knowledge mv log.md old.md')), 'deny')
+  })
+  it('ask for other git mv, git apply and stash apply', () => {
+    for (const c of ['git mv projects/a.md projects/b.md', 'git apply kb.patch', 'git stash apply', 'git stash pop', 'git read-tree -u HEAD', 'git checkout-index -a -f']) {
+      assert.equal(kind(sh(c, KB)), 'ask', c)
+    }
+  })
+  it('allow checks and other repos', () => {
+    assert.equal(kind(sh('git apply --check kb.patch', KB)), 'allow')
+    assert.equal(kind(sh('git apply --stat kb.patch', KB)), 'allow')
+    assert.equal(kind(sh('git stash list', KB)), 'allow')
+    assert.equal(kind(sh('git mv a.md b.md', OTHER)), 'allow')
+  })
+})
+
 describe('git in the knowledge base', () => {
   it('denies git add and git commit, whichever way the folder is named', () => {
     for (const form of ['"$env:USERPROFILE\\knowledge"', '$env:USERPROFILE/knowledge', '~/knowledge', '"%USERPROFILE%\\knowledge"', `"${KB}"`]) {
