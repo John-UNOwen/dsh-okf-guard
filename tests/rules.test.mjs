@@ -83,6 +83,25 @@ describe('fix 2: command substitutions are checked', () => {
   })
 })
 
+describe('fix 3: line continuations', () => {
+  it('joins bash \\, PowerShell ` and a newline inside ( )', () => {
+    assert.equal(kind(bash('git -C ~/knowledge \\\n  commit -m x')), 'deny')
+    assert.equal(kind(bash('git -C ~/knowledge \\\r\n  commit -m x')), 'deny')
+    assert.equal(kind(bash('echo "a \\\nb"; git -C ~/knowledge add -A')), 'deny')
+    assert.equal(kind(sh('git -C ~/knowledge `\n  commit -m x')), 'deny')
+    assert.equal(kind(sh('git -C ~/knowledge `\n  config core.hooksPath .nohooks')), 'deny')
+    assert.equal(kind(sh('git -C ~/knowledge `\n  push --force')), 'deny')
+    assert.equal(kind(sh('git -C ~/knowledge `\r\n  reset --hard')), 'ask')
+    assert.equal(kind(sh('Add-Content -Value "x" `\n -Path "$env:USERPROFILE\\knowledge\\log.md"')), 'deny')
+    assert.equal(kind(sh('Write-Output (\n  git -C ~/knowledge add -A)')), 'deny')
+  })
+  it('still treats other newlines as separators', () => {
+    assert.equal(kind(sh('git status\ngit add -A', KB)), 'deny')
+    assert.equal(kind(bash('cd ~/knowledge\ngit add -A')), 'deny')
+    assert.equal(kind(sh(`cd ~/knowledge\ngit status\ncd "${OTHER}"\ngit add -A`)), 'allow')
+  })
+})
+
 describe('git in the knowledge base', () => {
   it('denies git add and git commit, whichever way the folder is named', () => {
     for (const form of ['"$env:USERPROFILE\\knowledge"', '$env:USERPROFILE/knowledge', '~/knowledge', '"%USERPROFILE%\\knowledge"', `"${KB}"`]) {
