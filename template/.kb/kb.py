@@ -951,7 +951,7 @@ def do_check(mode, files):
                 head_dirs.add(PurePosixPath(*parts[:i]).as_posix())
 
         touched, gone, md_touched = {}, set(), False
-        added_lines = {}
+        added_lines, old_of = {}, {}
         for st, p, old in changes:
             if st == "U":
                 block(p, "has an unresolved merge conflict.")
@@ -965,6 +965,7 @@ def do_check(mode, files):
             if data is None:
                 continue
             touched[p] = (st, data)
+            old_of[p] = old or p
             if p.endswith(".md"):
                 md_touched = True
             old_text = text_of(old_blobs.get("%s:%s" % (base, old or p))) or ""
@@ -995,6 +996,12 @@ def do_check(mode, files):
                 diags = []
 
         exists_now = (lambda p: p in staged) if mode == "staged" else (lambda p: (ROOT / p).is_file())
+
+        # Log lines this change adds, for the "every changed concept is logged" rule.
+        head_log = text_of(cat_blobs(["%s:log.md" % base]).get("%s:log.md" % base)) or ""
+        head_log_lines = set(head_log.split("\n"))
+        new_log = text_of(new_content("log.md")) or ""
+        new_log_lines = [l for l in new_log.split("\n") if l not in head_log_lines and LOG_LINE_RE.match(l.strip())]
 
         for p, (st, data) in sorted(touched.items()):
             if not p.endswith(".md"):
@@ -1058,7 +1065,17 @@ def do_check(mode, files):
                     block(p, msg)
             if PLACEHOLDER in text:
                 block(p, "still has %s placeholder lines. Write the real text." % PLACEHOLDER)
-            if len(data) > SIZE_WARN:
+            if not any("](/%s)" % p in l for l in new_log_lines):
+                how = ("kb.py log Added %s" % p) if st == "A" else \
+                      ("kb.py touch %s --note 'what changed' (it also refreshes generated.at)" % p)
+                block(p, "changed, but log.md has no new line for it. Run %s." % how)
+            old_size = len(old_blobs.get("%s:%s" % (base, old_of.get(p, p))) or b"")
+            if len(data) > SIZE_WARN and len(data) > old_size:
+                block(p, "grows to %.1f KB%s, over the 20 KB limit. A concept holds the current truth: "
+                         "rewrite it shorter and put the run history in the commit message, or ask "
+                         "the user about splitting it (okf split --section)."
+                      % (len(data) / 1024, (" (was %.1f KB)" % (old_size / 1024)) if old_size else ""))
+            elif len(data) > SIZE_WARN:
                 warn(p, "is %d KB, over 20 KB. A concept holds the current truth: move run history "
                         "into commit messages, or ask the user about splitting it "
                         "(okf split --section)." % (len(data) // 1024))
