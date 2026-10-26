@@ -243,6 +243,18 @@ describe('kb.py and hooks', { skip }, () => {
       assert.match(r.out, /BLOCK projects\/app-b\/notes\/index\.md: its folder still has projects\/app-b\/notes\/b2\.md/);
       assert.ok(headTree(d).includes('projects/app-b/notes/index.md'));
     });
+
+    test('an index edited with a trailing blank line leaves a clean tree', () => {
+      const d = clone();
+      newConcept(d, 'projects/app-b/notes/b.md', 'B note');
+      commitNew(d, 'projects/app-b/notes/b.md');
+      rm(d, 'projects/app-b/notes/b.md', 'projects/app-b/notes/index.md', 'projects/app-b/index.md');
+      const kept = read(d, 'projects/index.md').split('\n').filter((l) => !l.includes('app-b'));
+      write(d, 'projects/index.md', kept.join('\r\n') + '\r\n');
+      const r = kb(d, 'commit', '-m', 'kb: drop app-b note b', 'projects/app-b/notes/b.md');
+      assert.equal(r.code, 0, r.out);
+      assert.deepEqual(status(d), []);
+    });
   });
 
   describe('#15 index lines in partial commits', () => {

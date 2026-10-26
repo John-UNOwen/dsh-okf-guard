@@ -1389,9 +1389,11 @@ def cmd_commit(a):
             text = partial_index(head_text, work_text, keep)
         if text == (head_text.rstrip("\n") + "\n" if head_text else "\n"):
             continue
-        stage_text(p, text)
         paths.append(p)
-        if text != work_text.rstrip("\n") + "\n":
+        if text == work_text.rstrip("\n") + "\n":
+            git("add", "--", p)  # all of it: stage the file as it is, so the tree is clean afterwards
+        else:
+            stage_text(p, text)
             partial.append(p)
     if "log.md" in rels and (ROOT / "log.md").exists():
         # A named log.md loses the new lines whose files are neither in this commit nor in HEAD,
