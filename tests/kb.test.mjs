@@ -290,4 +290,43 @@ describe('kb.py and hooks', { skip }, () => {
       assert.doesNotMatch(r.out, /not from this change/);
     });
   });
+
+  describe('#16 log lines for files outside the commit', () => {
+    const h = 'projects/app-h/notes/h.md';
+    const g = 'projects/app-h/notes/g.md';
+
+    test('kb.py commit log.md alone leaves the lines out and commits nothing', () => {
+      const d = clone();
+      newConcept(d, h, 'H note');
+      const before = headFile(d, 'log.md');
+      const r = kb(d, 'commit', '-m', 'kb: log note h', 'log.md');
+      assert.notEqual(r.code, 0, r.out);
+      assert.match(r.out, /left 3 line\(s\) out of log\.md/);
+      assert.match(r.out, /\/projects\/app-h\/notes\/h\.md/);
+      assert.equal(headFile(d, 'log.md'), before);
+    });
+
+    test('a named log.md keeps only lines for files in the commit or HEAD', () => {
+      const d = clone();
+      newConcept(d, h, 'H note');
+      newConcept(d, g, 'G note');
+      // h stays out of the commit, so its index line must stay out too.
+      const r = kb(d, 'commit', '-m', 'kb: add g', g, 'log.md');
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /left 1 line\(s\) out of log\.md/);
+      const log = headFile(d, 'log.md');
+      assert.match(log, /\/projects\/app-h\/notes\/g\.md/);
+      assert.doesNotMatch(log, /\/projects\/app-h\/notes\/h\.md/);
+      assert.match(log, /\/projects\/app-h\/index\.md/);
+    });
+
+    test('the check blocks a staged log line whose file is not committed', () => {
+      const d = clone();
+      newConcept(d, h, 'H note');
+      git(d, 'add', 'log.md');
+      const r = gitCommit(d, '-m', 'kb: log note h only');
+      assert.notEqual(r.code, 0, r.out);
+      assert.match(r.out, /BLOCK log\.md: a new line links to \/projects\/app-h\/notes\/h\.md, which is not in this commit/);
+    });
+  });
 });

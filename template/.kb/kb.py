@@ -1044,6 +1044,11 @@ def do_check(mode, files):
         head_log_lines = set(head_log.split("\n"))
         new_log = text_of(new_content("log.md")) or ""
         new_log_lines = [l for l in new_log.split("\n") if l not in head_log_lines and LOG_LINE_RE.match(l.strip())]
+        for l in new_log_lines:
+            t = LINK_TARGET_RE.search(l)
+            if t and not exists_now(t.group(1)) and t.group(1) not in gone:
+                block("log.md", "a new line links to /%s, which is not in this commit. Commit that "
+                                "file with it, or leave the line out for now." % t.group(1))
 
         index_dropped = set()
         for p, (st, data) in sorted(touched.items()):
@@ -1361,6 +1366,24 @@ def cmd_commit(a):
         paths.append(p)
         if text != work_text.rstrip("\n") + "\n":
             partial.append(p)
+    if "log.md" in rels and (ROOT / "log.md").exists():
+        # A named log.md loses the new lines whose files are neither in this commit nor in HEAD,
+        # so HEAD never gets a log line that points nowhere.
+        head_text = text_of(cat_blobs(["%s:log.md" % base]).get("%s:log.md" % base)) or ""
+        work_text = read_text(ROOT / "log.md")
+        text = partial_log(head_text, work_text, keep | set(auto) | head_paths)
+        kept_lines = set(text.split("\n"))
+        dropped = [l for l in work_text.split("\n")
+                   if l.strip() and l not in kept_lines and not HEADING_RE.match(l)]
+        if dropped:
+            stage_text("log.md", text)
+            partial.append("log.md")
+            out("kb commit: left %d line(s) out of log.md, because the files they link to are "
+                "neither in this commit nor in HEAD:" % len(dropped))
+            for l in dropped:
+                out("  " + mask(l.strip()))
+    if run(["git", "diff", "--cached", "--quiet"])[0] == 0:
+        fail("nothing is left to commit once the lines for files outside this commit are left out.")
     if not hook_installed():
         out("note: the pre-commit hook is not installed in this clone, so kb.py runs the check itself. "
             "(To install it: git config core.hooksPath .githooks)")
