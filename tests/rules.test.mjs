@@ -263,6 +263,32 @@ if (WIN) {
   })
 }
 
+describe('fix 9: kb.privateName', () => {
+  it('asks before an agent changes it, anywhere', () => {
+    for (const [c, cwd] of [
+      ['git config kb.privateName "the"', OTHER],
+      ['git config --global kb.privateName "the"', OTHER],
+      ['git config --global --add kb.privateName x', OTHER],
+      ['git config --unset-all kb.privateName', KB],
+      ['git config set kb.privateName x', KB],
+      ['git config --remove-section kb', KB],
+      ['git -C ~/knowledge config kb.privateName x', OTHER],
+    ]) {
+      assert.equal(kind(sh(c, cwd)), 'ask', c)
+    }
+  })
+  it('lets reads through', () => {
+    for (const c of ['git config kb.privateName', 'git config --get-all kb.privateName', 'git config get kb.privateName', 'git config --list']) {
+      assert.equal(kind(sh(c, KB)), 'allow', c)
+    }
+  })
+  it('ignores names too short to match safely', () => {
+    const g = createGuard({}, { ...env, privateNames: ['a b', 'xy'], shortHome: null })
+    const d = g.decide({ name: 'edit', arguments: { file_path: kb('projects', 'a', 'decisions', 'old.md'), old_string: 'a', new_string: 'ab and xy here' }, agent: { session: { header: { cwd: OTHER } } } })
+    assert.equal(kind(d), 'allow')
+  })
+})
+
 describe('git in the knowledge base', () => {
   it('denies git add and git commit, whichever way the folder is named', () => {
     for (const form of ['"$env:USERPROFILE\\knowledge"', '$env:USERPROFILE/knowledge', '~/knowledge', '"%USERPROFILE%\\knowledge"', `"${KB}"`]) {
