@@ -986,6 +986,49 @@ def do_check(mode, files):
                 elif USER_PATH_RE.search(l):
                     warn(p, "line %d has an absolute user folder path; prefer %%USERPROFILE%% or ~." % n)
 
+        exists_now = (lambda p: p in staged) if mode == "staged" else (lambda p: (ROOT / p).is_file())
+        new_paths = set(staged) if mode == "staged" else \
+            {p for p in head_paths | set(touched) if p and exists_now(p)}
+        new_indexes = sorted(p for p in new_paths if PurePosixPath(p).name == "index.md")
+        idx_cache = {}
+
+        def index_text(ip):
+            if ip not in idx_cache:
+                idx_cache[ip] = text_of(new_content(ip)) or ""
+            return idx_cache[ip]
+
+        # Deletions: the log, the indexes of folders that keep files, the tools, and anything an
+        # index still links to must stay. Nothing is deleted silently.
+        gone_reported = set()
+        related = set(touched)
+        for g in sorted(gone):
+            if exists_now(g):
+                continue
+            gp = PurePosixPath(g)
+            for i in range(len(gp.parts)):
+                d = PurePosixPath(*gp.parts[:i])
+                related.add("index.md" if str(d) == "." else (d / "index.md").as_posix())
+            if g.endswith(".md"):
+                md_touched = True
+            if g == "log.md":
+                block(g, "deleting log.md is not allowed; it is the history of the knowledge base.")
+            elif g == "index.md":
+                block(g, "deleting the root index.md is not allowed.")
+            elif gp.parts[0] in (".kb", ".githooks") or g == ".gitattributes":
+                block(g, "deleting the knowledge base tools is not allowed.")
+            elif gp.name == "index.md":
+                folder = gp.parent.as_posix() + "/"
+                left = sorted(p for p in new_paths if p.startswith(folder))
+                if left:
+                    block(g, "its folder still has %s. A folder index can only go together with "
+                             "the last file in its folder." % ", ".join(left[:3]))
+            if g.endswith(".md"):
+                for ip in new_indexes:
+                    if "](/%s)" % g in index_text(ip):
+                        gone_reported.add(g)
+                        block(g, "is deleted, but %s still links to it. Remove that line in the "
+                                 "same commit." % ip)
+
         diags = None
         if md_touched:
             diags = okf_diagnostics(tree)
@@ -994,8 +1037,6 @@ def do_check(mode, files):
                              "%USERPROFILE%\\.cargo\\bin\\okf.exe), so the knowledge base "
                              "cannot be checked. Ask the user to install it.")
                 diags = []
-
-        exists_now = (lambda p: p in staged) if mode == "staged" else (lambda p: (ROOT / p).is_file())
 
         # Log lines this change adds, for the "every changed concept is logged" rule.
         head_log = text_of(cat_blobs(["%s:log.md" % base]).get("%s:log.md" % base)) or ""
@@ -1100,8 +1141,9 @@ def do_check(mode, files):
                 for cid in (listed.group(1).split(", ") if listed else []):
                     added = "\n".join(l for _, l in added_lines.get(p, []))
                     if cid in gone_ids:
-                        block(p, "still lists /%s.md, which this change removes. Remove or "
-                                 "repoint that line." % cid)
+                        if cid + ".md" not in gone_reported:
+                            block(p, "still lists /%s.md, which this change removes. Remove or "
+                                     "repoint that line." % cid)
                     elif p in touched and cid in added and not exists_now(cid + ".md"):
                         block(p, "links to /%s.md, which does not exist." % cid)
                     elif p in touched and exists_now(cid + ".md"):
@@ -1111,7 +1153,7 @@ def do_check(mode, files):
                 continue
             if "duplicate date heading" in msg:
                 continue
-            if p not in touched:
+            if p not in related:
                 continue
             if sev == "error":
                 block(p, "okf: " + msg)
