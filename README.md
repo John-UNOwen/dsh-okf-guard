@@ -53,9 +53,11 @@ cargo install okf
 `%USERPROFILE%\.cargo\bin`.
 
 Create the knowledge base at `%USERPROFILE%\knowledge` (PowerShell, from a
-clone of this repo):
+clone of this repo; the GitHub install leaves `template/` out):
 
 ```powershell
+git clone https://github.com/John-UNOwen/dsh-okf-guard.git
+cd dsh-okf-guard
 $kb = "$env:USERPROFILE\knowledge"
 Copy-Item -Recurse .\template $kb
 git -C $kb init -b main
@@ -93,17 +95,28 @@ To use a different folder, set `knowledgeRoot` (see Settings).
 
 ## Install
 
+From GitHub:
+
+```powershell
+dsh plugin --profile web add github:John-UNOwen/dsh-okf-guard
+```
+
+Add `#<commit>` to pin a version, e.g. `github:John-UNOwen/dsh-okf-guard#a26ec64`.
+
+Or from a local clone:
+
 ```powershell
 dsh plugin --profile web add "file:$env:USERPROFILE\Documents\GitHub\dsh-okf-guard"
 ```
 
-DSH copies the plugin into the profile and turns it on. Restart DSH afterwards.
+Either way, DSH copies the plugin into the profile and turns it on. Restart DSH
+afterwards.
 
-To pick up later edits to this folder, remove and add it again:
+To update, remove the plugin and add it again with the same command:
 
 ```powershell
 dsh plugin --profile web remove dsh-okf-guard
-dsh plugin --profile web add "file:$env:USERPROFILE\Documents\GitHub\dsh-okf-guard"
+dsh plugin --profile web add github:John-UNOwen/dsh-okf-guard
 ```
 
 ## Settings
