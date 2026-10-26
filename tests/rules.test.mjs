@@ -230,6 +230,39 @@ describe('fix 7: git commands that change files without a commit', () => {
   })
 })
 
+if (WIN) {
+  describe('fix 8: the knowledge base spelled with its own 8.3 name', () => {
+    const SHORT_ROOT = `${SHORT}\\KNOWLE~1`
+    const at = (g, command, cwd = OTHER) => g.decide({ name: 'pwsh', arguments: { command }, agent: { session: { header: { cwd } } } })
+    it('is recognized when detection found the short root', () => {
+      const g = createGuard({ knowledgeRoot: '~/knowledge' }, { ...env, shortRoot: SHORT_ROOT })
+      assert.equal(kind(at(g, `git -C ${SHORT_ROOT} commit -m x`)), 'deny')
+      assert.equal(kind(at(g, `Add-Content ${SHORT_ROOT}\\log.md x`)), 'deny')
+      assert.equal(kind(at(g, 'git commit -m x', SHORT_ROOT)), 'deny')
+      assert.equal(kind(at(g, `Add-Content "${HOME}\\KNOWLE~1\\log.md" x`)), 'deny')
+      assert.equal(kind(at(g, `git -C ${SHORT}\\OTHER~1 commit -m x`)), 'allow')
+    })
+    it('is recognized by shape below the home folder', () => {
+      assert.equal(kind(sh(`git -C ${SHORT_ROOT} commit -m x`)), 'deny')
+      assert.equal(kind(sh(`Remove-Item ${SHORT_ROOT}\\.kb\\* -Recurse`)), 'deny')
+      assert.equal(kind(sh(`git -C ${SHORT_ROOT} reset --hard`)), 'ask')
+      assert.equal(kind(file('write', { file_path: `${SHORT_ROOT}\\log.md`, content: 'x' })), 'deny')
+    })
+    it('works when the configured root is the short one', () => {
+      const g = createGuard({ knowledgeRoot: SHORT_ROOT }, env)
+      assert.equal(kind(at(g, 'git -C ~/knowledge add -A')), 'deny')
+      assert.equal(kind(at(g, `git -C ${SHORT_ROOT} add -A`)), 'deny')
+    })
+    it('learns the short root through update()', () => {
+      const g = createGuard({}, { ...env, shortHome: undefined })
+      const call = `git -C ${SHORT_ROOT} add -A`
+      assert.equal(kind(at(g, call)), 'allow')
+      g.update({ shortRoot: SHORT_ROOT })
+      assert.equal(kind(at(g, call)), 'deny')
+    })
+  })
+}
+
 describe('git in the knowledge base', () => {
   it('denies git add and git commit, whichever way the folder is named', () => {
     for (const form of ['"$env:USERPROFILE\\knowledge"', '$env:USERPROFILE/knowledge', '~/knowledge', '"%USERPROFILE%\\knowledge"', `"${KB}"`]) {

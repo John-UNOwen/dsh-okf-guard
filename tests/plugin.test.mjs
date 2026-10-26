@@ -152,6 +152,7 @@ describe('account name detection on this PC', () => {
 
   it('detectEnvironment returns the short home path and extra names', () => {
     assert.ok(found.shortHome === null || typeof found.shortHome === 'string')
+    assert.ok(found.shortRoot === null || typeof found.shortRoot === 'string')
     assert.ok(Array.isArray(found.extraNames))
   })
 
