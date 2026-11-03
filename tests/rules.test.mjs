@@ -757,3 +757,111 @@ describe('review 14: the name matches whole words only', () => {
     assert.equal(kind(edit('C:\\Users\\ann\\x')), 'deny')
   })
 })
+
+describe('variables in paths', () => {
+  // The command that full-access sessions saw refused: variables built with Join-Path, a value group, git -C $u.
+  const trigger = (repo) =>
+    [
+      "$lines = @('bin/', 'obj/')",
+      `$repo = '${repo}'`,
+      "$u  = Join-Path $repo 'build\\unity-project'",
+      "$gi = Join-Path $u '.gitignore'",
+      'Set-Content $gi ($lines -join "`r`n") -Encoding utf8',
+      'git -C $u add .gitignore',
+      "git -C $u commit -m 'ignore build output'",
+    ].join('\n')
+
+  it('lets the reported command through when the variables point outside', () => {
+    assert.equal(kind(sh(trigger('~\\Documents\\GitHub\\mfg-decomp'))), 'allow')
+    assert.equal(kind(sh(trigger('C:\\work\\proj'))), 'allow')
+  })
+  it('treats the same command inside the knowledge base like a literal path', () => {
+    assert.equal(kind(sh(trigger('~\\knowledge'))), 'deny')
+    assert.equal(kind(sh(trigger('~\\knowledge\\projects\\a'))), 'deny')
+  })
+  it('reads $name, "$name\\x", ${name} and Join-Path forms', () => {
+    for (const c of [
+      "$k = '~\\knowledge'\nSet-Content $k\\log.md x",
+      "$k = '~\\knowledge'\nSet-Content \"$k\\log.md\" x",
+      "$k = '~\\knowledge'\nSet-Content \"${k}\\log.md\" x",
+      "$k = '~\\knowledge'\nSet-Content ${k}\\log.md x",
+      "${k} = '~\\knowledge'\nSet-Content \"$k\\log.md\" x",
+      "$k = '~\\knowledge'\n$f = Join-Path $k 'log.md'\nSet-Content $f x",
+      "$k = '~\\knowledge'\n$f = (Join-Path $k 'log.md')\nAdd-Content -Path $f -Value x",
+      "$k = '~\\knowledge'\n$f = \"$k\\.kb\\kb.py\"\nSet-Content -Path $f -Value x",
+      "$k = '~\\knowledge'\n$j = $k\ngit -C $j commit -m x",
+      "$k = \"$env:USERPROFILE\\knowledge\"; git -C $k add -A",
+      '$k = Join-Path $HOME knowledge; git -C $k commit -m x',
+      "$k = '~/knowledge'; git -C \"$k\" commit -m x",
+      "$k = '~\\knowledge'; Set-Location $k; git commit -m x",
+      "$k = '~\\knowledge'; Push-Location $k; git add -A",
+      "$k = '~\\knowledge'; cd $k; git commit -m x",
+      "$g = '~\\knowledge\\.git'; $env:GIT_DIR = $g; git commit -m x",
+      "$k = '~\\knowledge'; \"x\" > \"$k\\log.md\"",
+    ]) {
+      assert.equal(kind(sh(c)), 'deny', c)
+    }
+  })
+  it('uses the last value of a reassigned variable', () => {
+    assert.equal(kind(sh("$k = '~\\knowledge'\n$k = 'C:\\work\\proj'\ngit -C $k commit -m x")), 'allow')
+    assert.equal(kind(sh("$k = 'C:\\work\\proj'\n$k = '~\\knowledge'\ngit -C $k commit -m x")), 'deny')
+    assert.equal(kind(sh("$k = 'C:\\work'\n$k = Join-Path $k 'proj'\ngit -C $k commit -m x")), 'allow')
+  })
+  it('applies the inside rules to a resolved path', () => {
+    assert.equal(kind(sh("$f = '~\\knowledge\\projects\\a\\decisions\\old.md'\nAdd-Content $f 'Test Person was here'")), 'deny')
+    assert.equal(kind(sh("$f = '~\\knowledge\\projects\\a\\decisions\\old.md'\nAdd-Content $f 'a fact'")), 'allow')
+    assert.equal(kind(sh("$d = '~\\knowledge\\projects\\a'\nRemove-Item $d -Recurse")), 'ask')
+    assert.equal(kind(sh("$d = '~\\knowledge'\nRemove-Item $d -Recurse -Force")), 'deny')
+    assert.equal(kind(sh("$k = '~\\knowledge'\ngit -C $k status")), 'allow')
+  })
+  it('asks when a variable is set where its value cannot be followed', () => {
+    for (const c of [
+      "if ($x) { $k = '~\\knowledge' }\ngit -C $k commit -m x",
+      "$k = 'C:\\work\\proj'\nif ($x) {\n  $k = '~\\knowledge'\n}\ngit -C $k commit -m x",
+      "$k = 'C:\\work\\proj'\ntry {\n  $k = '~\\knowledge'\n} catch {}\ngit -C $k commit -m x",
+      "foreach ($k in @('C:\\work\\proj')) { git -C $k commit -m x }",
+      "foreach ($k in @('C:\\work\\proj')) {\n  git -C $k commit -m x\n}",
+      "@('C:\\work\\proj') | ForEach-Object { $k = $_ }\ngit -C $k commit -m x",
+      '$k = $(Get-KbPath)\ngit -C $k commit -m x',
+      '$k = (Get-KbPath)\ngit -C $k commit -m x',
+      '$k = Get-ChildItem ~ -Filter knowledge\ngit -C $k commit -m x',
+      "$k = Get-Item ~\\knowledge\ngit -C $k.FullName commit -m x",
+      "$k = 'C:\\work\\proj' | Out-String\ngit -C $k commit -m x",
+      "$k = 'C:\\work\\proj'\n$null = $($k = '~\\knowledge')\ngit -C $k commit -m x",
+      "$k = 'C:\\work\\proj'\nSet-Variable k '~\\knowledge'\ngit -C $k commit -m x",
+      "$k = 'C:\\work\\proj'\n. .\\setup.ps1\ngit -C $k commit -m x",
+      "$k = 'C:\\work\\proj'\nGet-Item x -OutVariable k\ngit -C $k commit -m x",
+      "[string]$k = 'C:\\work\\proj'\ngit -C $k commit -m x",
+      "$a, $k = 'x', 'C:\\work\\proj'\ngit -C $k commit -m x",
+      "$k = 'C:\\work'\n$k += '\\proj'\ngit -C $k commit -m x",
+      'git -C $nowhere commit -m x',
+      'Set-Content $nowhere x',
+      'Set-Content "$nowhere\\log.md" x',
+      "$k = '~\\knowledge'\npwsh -c \"git -C $k commit -m x\"",
+    ]) {
+      assert.equal(kind(sh(c)), 'ask', c)
+    }
+  })
+  it('leaves reads, other folders and plain values alone', () => {
+    for (const c of [
+      'git -C $nowhere status',
+      'git -C $nowhere log -1',
+      "Set-Content 'C:\\work\\proj\\x.txt' ($lines -join ',')",
+      "Set-Content -Path C:\\work\\proj\\x.txt -Value ($lines -join ',')",
+      "$k = '~\\knowledge'\nSet-Content '$k\\log.md' x",
+      "$t = 'some text'\nSet-Content C:\\work\\proj\\x.txt $t",
+      "$x = 1\n$x++\nWrite-Output $x",
+    ]) {
+      assert.equal(kind(sh(c)), 'allow', c)
+    }
+  })
+  it('follows bash assignments the same way', () => {
+    assert.equal(kind(bash('k=~/knowledge; git -C "$k" commit -m x')), 'deny')
+    assert.equal(kind(bash('k=~/knowledge; echo x > "${k}/log.md"')), 'deny')
+    assert.equal(kind(bash('k=/work/proj; git -C "$k" commit -m x')), 'allow')
+    assert.equal(kind(bash('k=/work/proj; true && k=~/knowledge; git -C "$k" commit -m x')), 'ask')
+    assert.equal(kind(bash('for k in ~/knowledge; do git -C "$k" commit -m x; done')), 'ask')
+    assert.equal(kind(bash('k=/work/proj\nif true; then\n  k=~/knowledge\nfi\ngit -C "$k" commit -m x')), 'ask')
+    assert.equal(kind(bash('k=$(pwd); git -C "$k" commit -m x')), 'ask')
+  })
+})
