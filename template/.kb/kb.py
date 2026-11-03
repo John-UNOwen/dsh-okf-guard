@@ -263,6 +263,17 @@ def is_reserved(rel):
     return PurePosixPath(rel).name in ("index.md", "log.md")
 
 
+def body_size(data):
+    """Bytes after the frontmatter, so a frontmatter repair does not count as growth."""
+    t = data[len(BOM):] if data.startswith(BOM) else data
+    t = t.replace(b"\r\n", b"\n")
+    if t.startswith(b"---\n"):
+        end = t.find(b"\n---\n", 3)
+        if end >= 0:
+            return len(t) - (end + 5)
+    return len(t)
+
+
 def title_from_name(name):
     words = [w for w in re.split(r"[-_]", name.replace(".md", "")) if w]
     return " ".join(w[:1].upper() + w[1:] for w in words) or "Untitled"
@@ -1154,8 +1165,10 @@ def do_check(mode, files):
                 how = ("kb.py log Added %s" % p) if st == "A" else \
                       ("kb.py touch %s --note 'what changed' (it also refreshes generated.at)" % p)
                 block(p, "changed, but log.md has no new line for it. Run %s." % how)
-            old_size = len(old_blobs.get("%s:%s" % (base, old_of.get(p, p))) or b"")
-            if len(data) > SIZE_WARN and len(data) > old_size:
+            old_data = old_blobs.get("%s:%s" % (base, old_of.get(p, p))) or b""
+            old_size = len(old_data)
+            if len(data) > SIZE_WARN and body_size(data) > (body_size(old_data) if old_data else 0):
+                # Only body growth counts: fixing the frontmatter of an oversized concept must stay possible.
                 block(p, "grows to %.1f KB%s, over the 20 KB limit. A concept holds the current truth: "
                          "rewrite it shorter and put the run history in the commit message, or ask "
                          "the user about splitting it (okf split --section)."
