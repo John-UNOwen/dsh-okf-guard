@@ -452,4 +452,73 @@ describe('kb.py and hooks', { skip }, () => {
       assert.match(r.out, /kb check: OK/);
     });
   });
+
+  describe('#13 the 20 KB rule', () => {
+    const rel = 'projects/app-s/notes/big.md';
+    // A concept already over 20 KB, committed past the hook the way old concepts got there.
+    function oversized(eol = '\n') {
+      const d = clone();
+      newConcept(d, rel, 'Big note');
+      const filler = Array.from({ length: 700 }, (_, i) => `Fact ${i}: a line of current truth about the app.`).join('\n');
+      write(d, rel, (read(d, rel).trimEnd() + '\n\n' + filler + '\n').replace(/\n/g, eol));
+      assert.equal(git(d, 'add', '-A').code, 0);
+      assert.equal(gitCommit(d, '-q', '--no-verify', '-m', 'kb: seed big').code, 0);
+      assert.ok(fs.statSync(file(d, rel)).size > 20 * 1024);
+      return d;
+    }
+    const edit = (d, change) => write(d, rel, change(read(d, rel)));
+    const commit = (d) => {
+      assert.equal(kb(d, 'touch', rel, '--note', 'test edit').code, 0);
+      return kb(d, 'commit', '-m', 'kb: edit big', rel);
+    };
+
+    test('a small frontmatter repair passes', () => {
+      const d = oversized();
+      edit(d, (t) => t.replace(/^type:/m, 'stale_after: 2027-06-01\ntype:'));
+      const r = commit(d);
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /over 20 KB/);
+    });
+
+    test('a frontmatter repair on a CRLF file passes', () => {
+      const d = oversized('\r\n');
+      edit(d, (t) => t.replace(/^type:/m, 'stale_after: 2027-06-01\r\ntype:'));
+      const r = commit(d);
+      assert.equal(r.code, 0, r.out);
+    });
+
+    test('body growth is blocked', () => {
+      const d = oversized();
+      edit(d, (t) => t + 'One more run note.\n');
+      const r = commit(d);
+      assert.notEqual(r.code, 0, r.out);
+      assert.match(r.out, /BLOCK projects\/app-s\/notes\/big\.md: grows to/);
+    });
+
+    test('frontmatter growth past the slack is blocked', () => {
+      const d = oversized();
+      const long = Array.from({ length: 60 }, (_, i) => `run ${i} found the cache was cold again`).join(', ');
+      edit(d, (t) => t.replace(/^description:.*$/m, `description: '${long}.'`));
+      const r = commit(d);
+      assert.notEqual(r.code, 0, r.out);
+      assert.match(r.out, /grows to/);
+    });
+
+    test('shrinking the body passes even when the frontmatter grows a little', () => {
+      const d = oversized();
+      edit(d, (t) => t.replace(/^type:/m, 'stale_after: 2027-06-01\ntype:').replace(/^Fact 1\d\d:.*\n/gm, ''));
+      const r = commit(d);
+      assert.equal(r.code, 0, r.out);
+    });
+
+    test('a new concept over 20 KB is blocked', () => {
+      const d = clone();
+      newConcept(d, 'projects/app-s/notes/huge.md', 'Huge note');
+      const filler = Array.from({ length: 700 }, (_, i) => `Fact ${i}: a line of current truth about the app.`).join('\n');
+      write(d, 'projects/app-s/notes/huge.md', read(d, 'projects/app-s/notes/huge.md') + filler + '\n');
+      const r = kb(d, 'commit', '-m', 'kb: add huge', 'projects/app-s/notes/huge.md');
+      assert.notEqual(r.code, 0, r.out);
+      assert.match(r.out, /grows to/);
+    });
+  });
 });

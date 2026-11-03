@@ -855,6 +855,57 @@ describe('variables in paths', () => {
       assert.equal(kind(sh(c)), 'allow', c)
     }
   })
+  it('keeps a name set in a function, scriptblock or block unknown for the rest of the command', () => {
+    const safe = "$k = 'C:\\work\\proj'\n"
+    const use = '\ngit -C $k commit -m x'
+    for (const c of [
+      "function f { $script:k = '~\\knowledge' }\n" + safe + 'f' + use,
+      "function f {\n  $global:k = '~\\knowledge'\n}\n" + safe + 'f' + use,
+      "$sb = { $script:k = '~\\knowledge' }\n" + safe + '& $sb' + use,
+      "foreach ($i in 1..2) { $k = '~\\knowledge' }\n" + safe.trim() + use,
+    ]) {
+      assert.equal(kind(sh(c)), 'ask', c)
+    }
+  })
+  it('notices variable setters anywhere a command starts', () => {
+    const safe = "$k = 'C:\\work\\proj'\n"
+    const use = '\ngit -C $k commit -m x'
+    for (const c of [
+      safe + "if ($true) { Set-Variable k '~\\knowledge' }" + use,
+      safe + "$null = Set-Variable k '~\\knowledge' -PassThru" + use,
+      safe + "'~\\knowledge' | Tee-Object -Variable k" + use,
+      safe + "'~\\knowledge' | Tee-Object -Var k" + use,
+      safe + "Get-Item ~\\knowledge -OutVar k" + use,
+    ]) {
+      assert.equal(kind(sh(c)), 'ask', c)
+    }
+    assert.equal(kind(bash('k=/work/proj; while read k; do git -C "$k" commit -m x; done')), 'ask')
+    assert.equal(kind(bash('k=/work/proj; printf -v k %s ~/knowledge; git -C "$k" commit -m x')), 'ask')
+    assert.equal(kind(bash('k=/work/proj; mapfile k < list; git -C "$k" commit -m x')), 'ask')
+    assert.equal(kind(sh(safe + 'git add .' + "\n$k = 'C:\\work\\proj'" + use)), 'allow')
+  })
+  it('ignores # comments', () => {
+    // A } in a comment does not close the block, so the assignment inside the if stays unknown.
+    assert.equal(kind(sh("$k = '~\\knowledge'\nif ($x) { # close with }\n  $k = 'C:\\work\\proj'\n}\ngit -C $k commit -m x")), 'ask')
+    assert.equal(kind(sh("$k = 'C:\\work\\proj'\n# $k = '~\\knowledge'\ngit -C $k commit -m x")), 'allow')
+    assert.equal(kind(sh("$k = 'C:\\work\\proj'\n<# $k = '~\\knowledge' #>\ngit -C $k commit -m x")), 'allow')
+    assert.equal(kind(sh("$repo = 'C:\\work\\proj'  # the repo\ngit -C $repo commit -m x")), 'allow')
+    assert.equal(kind(sh("$k = '~\\knowledge'  # the knowledge base\ngit -C $k commit -m x")), 'deny')
+    assert.equal(kind(sh("$k = 'C:\\work\\a #b'\ngit -C $k commit -m x")), 'allow')
+    assert.equal(kind(bash('k=/work/proj # the repo\ngit -C "$k" commit -m x')), 'allow')
+  })
+  it('counts content-verb positionals past parameters it does not know', () => {
+    const inA = kb('projects', 'a')
+    for (const c of [
+      "$f = 'notes'\nOut-File -Width 200 $f -InputObject 'Test Person'",
+      "$f = 'notes'\nNew-Item -Type File $f -Value 'Test Person'",
+      "$f = 'notes'\nSet-Content -Bogus 1 $f 'Test Person'",
+      "$f = 'notes'\nSet-Content -Bogus $f 'Test Person'",
+    ]) {
+      assert.equal(kind(sh(c, inA)), 'deny', c)
+    }
+    assert.equal(kind(sh("$f = 'notes'\n$t = 'Test Person'\nSet-Content -Force $f $t", OTHER)), 'allow')
+  })
   it('follows bash assignments the same way', () => {
     assert.equal(kind(bash('k=~/knowledge; git -C "$k" commit -m x')), 'deny')
     assert.equal(kind(bash('k=~/knowledge; echo x > "${k}/log.md"')), 'deny')

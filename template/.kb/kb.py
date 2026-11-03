@@ -38,6 +38,7 @@ BOM = b"\xef\xbb\xbf"
 LOG_VERBS = ("Added", "Updated", "Created", "Deprecated")
 NOTE_MAX = 200
 SIZE_WARN = 20 * 1024
+FM_SLACK = 2 * 1024  # how much an oversized concept's frontmatter may grow (repairs), body growth is never allowed
 STATUSES = ("stable", "draft")
 PLACEHOLDER = "TODO(kb)"
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
@@ -263,15 +264,23 @@ def is_reserved(rel):
     return PurePosixPath(rel).name in ("index.md", "log.md")
 
 
-def body_size(data):
-    """Bytes after the frontmatter, so a frontmatter repair does not count as growth."""
+def part_sizes(data):
+    """(frontmatter bytes, body bytes), without a BOM and with LF line ends."""
     t = data[len(BOM):] if data.startswith(BOM) else data
     t = t.replace(b"\r\n", b"\n")
     if t.startswith(b"---\n"):
         end = t.find(b"\n---\n", 3)
         if end >= 0:
-            return len(t) - (end + 5)
-    return len(t)
+            return end + 5, len(t) - (end + 5)
+    return 0, len(t)
+
+
+def grows_too_much(data, old_data):
+    """Whether an edit grows a concept the 20 KB rule refuses: any body growth, or the
+    frontmatter growing by more than FM_SLACK. Small frontmatter repairs stay possible."""
+    new_fm, new_body = part_sizes(data)
+    old_fm, old_body = part_sizes(old_data) if old_data else (0, 0)
+    return new_body > old_body or new_fm > old_fm + FM_SLACK
 
 
 def title_from_name(name):
@@ -1167,8 +1176,7 @@ def do_check(mode, files):
                 block(p, "changed, but log.md has no new line for it. Run %s." % how)
             old_data = old_blobs.get("%s:%s" % (base, old_of.get(p, p))) or b""
             old_size = len(old_data)
-            if len(data) > SIZE_WARN and body_size(data) > (body_size(old_data) if old_data else 0):
-                # Only body growth counts: fixing the frontmatter of an oversized concept must stay possible.
+            if len(data) > SIZE_WARN and grows_too_much(data, old_data):
                 block(p, "grows to %.1f KB%s, over the 20 KB limit. A concept holds the current truth: "
                          "rewrite it shorter and put the run history in the commit message, or ask "
                          "the user about splitting it (okf split --section)."
