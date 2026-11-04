@@ -15,6 +15,7 @@ tool call runs, and tells the model the right command instead.
 - `okf index`, `okf validate --fix`, `okf lint --fix`, `okf fmt -w` on a folder, `okf new` and `okf init`.
 - `okf mv`, `rm`, `merge` and `split` without `--no-index`, because they regenerate index files.
 - Writing, moving or deleting `log.md`, `.kb/`, `.githooks/`, `.git/` or `.gitattributes`, from a shell command or a file tool. Copying them somewhere else is fine.
+- Downloading or unpacking over them: `-OutFile`, `curl -o`, `wget`, `tar -x`, `unzip`, `7z x` or `Expand-Archive` into those files or into a folder that holds them.
 - Creating a new concept file by hand. Use `kb.py new`.
 - Text that contains the Windows account name or the user folder path, written into the knowledge base by a file tool or a shell command. Names match as whole words. The name is worked out at run time and is never stored in this plugin.
 
@@ -25,6 +26,7 @@ tool call runs, and tells the model the right command instead.
 - Commands that move commits: `git reset` to another commit or `--soft`, `git pull --rebase`, `git branch -f` or `-D`, `git checkout -B`, `git switch -C`.
 - Commands that make commits the pre-commit check never sees: `git cherry-pick`, `git revert`, `git am`, `git merge` (fast-forward-only merges and `--abort` are fine).
 - `okf mv`, `rm`, `merge` and `split` with `--no-index`.
+- Downloading or unpacking into any other knowledge base folder.
 
 When another plugin or hook also has a say, its deny or its own question wins over okf-guard's question.
 
@@ -109,11 +111,16 @@ Override them in the profile's `cordis.patch.yml`:
   way (for example a `python -c` one-liner) can get past it. The pre-commit
   hook still checks everything at commit time.
 - Variables set in the same command are followed (`$repo = '...'`,
-  `Join-Path`, `"$repo\x"`). One set in a loop, an `if`, a function or from a
-  command's output can't be followed, so a write or a knowledge base git
-  command that uses it asks first. Quoted literal paths never ask.
+  `Join-Path`, `"$repo\x"`, `"$($repo)\x"`), also inside a block, and so are
+  environment variables, `$PWD`, loops and `ForEach-Object` over a literal
+  list (`'a','b'`, `1..3`, or a variable holding one), checked once per value.
+  A variable set inside an `if`, `try` or loop is unknown once the block ends,
+  one set in a function or script block is unknown for the rest of the
+  command, and one set from a command's output is unknown. A write or a
+  knowledge base git command that uses an unknown variable asks first, and so
+  does a splatted write (`Set-Content @params`). Quoted literal paths never ask.
 - It knows where a command runs from the session folder, the shell tool's
-  `workdir`, `cd`, `pushd` and `popd` in the same command, `git -C`,
+  `workdir`, `cd`, `cd -`, `pushd` and `popd` in the same command, `git -C`,
   `--git-dir`, `--work-tree`, and `GIT_DIR` or `GIT_WORK_TREE` set in the same
   command.
 - The 8.3 short form of the home folder (like `C:\Users\ABCDEF~1`) is looked
