@@ -819,8 +819,9 @@ describe('variables in paths', () => {
       "if ($x) { $k = '~\\knowledge' }\ngit -C $k commit -m x",
       "$k = 'C:\\work\\proj'\nif ($x) {\n  $k = '~\\knowledge'\n}\ngit -C $k commit -m x",
       "$k = 'C:\\work\\proj'\ntry {\n  $k = '~\\knowledge'\n} catch {}\ngit -C $k commit -m x",
-      "foreach ($k in @('C:\\work\\proj')) { git -C $k commit -m x }",
-      "foreach ($k in @('C:\\work\\proj')) {\n  git -C $k commit -m x\n}",
+      'foreach ($k in $dirs) { git -C $k commit -m x }',
+      'foreach ($k in (Get-ChildItem C:\\work)) {\n  git -C $k commit -m x\n}',
+      "foreach ($k in @('C:\\work\\proj', $other)) { git -C $k commit -m x }",
       "@('C:\\work\\proj') | ForEach-Object { $k = $_ }\ngit -C $k commit -m x",
       '$k = $(Get-KbPath)\ngit -C $k commit -m x',
       '$k = (Get-KbPath)\ngit -C $k commit -m x',
@@ -862,10 +863,52 @@ describe('variables in paths', () => {
       "function f { $script:k = '~\\knowledge' }\n" + safe + 'f' + use,
       "function f {\n  $global:k = '~\\knowledge'\n}\n" + safe + 'f' + use,
       "$sb = { $script:k = '~\\knowledge' }\n" + safe + '& $sb' + use,
-      "foreach ($i in 1..2) { $k = '~\\knowledge' }\n" + safe.trim() + use,
+      // Set in a loop or an if: it may or may not have happened once the block closes.
+      "foreach ($i in 1..2) { $k = '~\\knowledge' }" + use,
+      safe + "if ($x) { $k = '~\\knowledge' }" + use,
+      safe + "if ($x) { $k = '~\\knowledge' } else { $k = 'C:\\work\\b' }" + use,
     ]) {
       assert.equal(kind(sh(c)), 'ask', c)
     }
+    // A loop is not a function: a plain assignment after it holds.
+    assert.equal(kind(sh("foreach ($i in 1..2) { $k = '~\\knowledge' }\n" + safe.trim() + use)), 'allow')
+  })
+  it('checks a loop over a literal list once per value', () => {
+    // The command full-access sessions saw refused: a foreach over version strings, writing tools\upstream\fb-$v.js.
+    const fetch =
+      "cd 'C:\\work\\proj'; New-Item -ItemType Directory -Force -Path 'tools\\upstream' | Out-Null; " +
+      "foreach ($v in '0.13.1','0.13.0','0.14.0') { try { $r = Invoke-WebRequest -Uri \"https://unpkg.com/x@$v/dist/index.js\" -UseBasicParsing; " +
+      '$b = $r.Content; [System.IO.File]::WriteAllBytes("tools\\upstream\\fb-$v.js", $b); ' +
+      '$h = (Get-FileHash -LiteralPath "tools\\upstream\\fb-$v.js").Hash } catch { Write-Host $_ } }'
+    for (const c of [
+      fetch,
+      "foreach ($k in @('C:\\work\\proj')) { git -C $k commit -m x }",
+      "foreach ($k in 'C:\\work\\a', 'C:\\work\\b') {\n  git -C $k commit -m x\n}",
+      "foreach ($n in 1..3) { Set-Content \"C:\\work\\proj\\part$n.txt\" x }",
+      "foreach ($f in 'a.md','b.md') { foreach ($d in 'x','y') { Set-Content \"C:\\work\\$d\\$f\" z } }",
+    ]) {
+      assert.equal(kind(sh(c)), 'allow', c)
+    }
+    for (const c of [
+      "foreach ($k in 'C:\\work\\proj', '~\\knowledge') { git -C $k commit -m x }",
+      "foreach ($f in 'notes.md','log.md') { Set-Content \"~\\knowledge\\$f\" x }",
+      "foreach ($n in 1..3) { Add-Content \"~\\knowledge\\projects\\a\\decisions\\old.md\" \"Test Person $n\" }",
+    ]) {
+      assert.equal(kind(sh(c)), 'deny', c)
+    }
+    // A loop variable set again inside the body is unknown. cd to it is followed per value.
+    assert.equal(kind(sh("foreach ($k in 'C:\\work\\proj') { $k = Get-KbPath; git -C $k commit -m x }")), 'ask')
+    assert.equal(kind(sh("foreach ($k in 'C:\\work\\proj') { cd $k; git commit -m x }")), 'allow')
+    assert.equal(kind(sh("foreach ($k in 'C:\\work\\proj', '~\\knowledge') { cd $k; git commit -m x }")), 'ask')
+    assert.equal(kind(bash('for k in /work/a /work/b; do git -C "$k" commit -m x; done')), 'allow')
+    assert.equal(kind(bash('for k in /work/a "$HOME/knowledge"; do git -C "$k" commit -m x; done')), 'ask')
+  })
+  it('follows cd inside a block only between folders outside the knowledge base', () => {
+    assert.equal(kind(sh('if ($x) { cd ~\\knowledge; git commit -m x }')), 'ask')
+    // On its own line the cd starts its segment and is followed as written: the stricter answer.
+    assert.equal(kind(sh('if ($x) {\n  Set-Location ~\\knowledge\n}\ngit add -A')), 'deny')
+    assert.equal(kind(sh("try { Set-Location 'C:\\work\\a'; git commit -m x } finally { }")), 'allow')
+    assert.equal(kind(sh('try { Push-Location ~\\knowledge; git log -1 } finally { Pop-Location }')), 'allow')
   })
   it('notices variable setters anywhere a command starts', () => {
     const safe = "$k = 'C:\\work\\proj'\n"
@@ -914,5 +957,134 @@ describe('variables in paths', () => {
     assert.equal(kind(bash('for k in ~/knowledge; do git -C "$k" commit -m x; done')), 'ask')
     assert.equal(kind(bash('k=/work/proj\nif true; then\n  k=~/knowledge\nfi\ngit -C "$k" commit -m x')), 'ask')
     assert.equal(kind(bash('k=$(pwd); git -C "$k" commit -m x')), 'ask')
+  })
+})
+
+describe('variable review: harmless commands pass, writes into the knowledge base are still caught', () => {
+  const environ = { TEMP: 'C:\\Temp', LOCALAPPDATA: `${HOME}\\AppData\\Local`, TMPDIR: '/tmp' }
+  const g = createGuard({ knowledgeRoot: '~/knowledge' }, { ...env, environ })
+  const run = (name, command, cwd = OTHER) => g.decide({ name, arguments: { command }, agent: { session: { header: { cwd } } } })
+  const ps = (c, cwd) => kind(run('pwsh', c, cwd))
+  const sb = (c, cwd) => kind(run('bash', c, cwd))
+  const expect = (want, list, check = ps) => {
+    for (const c of list) assert.equal(check(c), want, c)
+  }
+
+  it('1: follows variables set inside a block, and forgets them when it closes', () => {
+    expect('allow', [
+      "foreach ($v in 'a','b') { $p = \"C:\\work\\out\\$v.txt\"; Set-Content -LiteralPath $p -Value 1 }",
+      "try {\n  $repo = 'C:\\work\\proj'\n  git -C $repo commit -m x\n} catch { Write-Host $_ }",
+      "foreach ($v in 'a','b')\n{\n  $p = \"C:\\work\\$v\"\n  git -C $p commit -m x\n}",
+      "if ($x) { $d = 'C:\\work\\a'; git -C $d commit -m x }",
+    ])
+    expect('deny', [
+      "foreach ($v in 'a','log') { $p = \"~\\knowledge\\$v.md\"; Set-Content -LiteralPath $p -Value 1 }",
+      "foreach ($v in 'a','b')\n{\n  $p = '~\\knowledge'\n  git -C $p add -A\n}",
+    ])
+    expect('ask', [
+      // Used before it is set in the body: the second pass sees the value from the first.
+      "$p = 'C:\\work\\x'\nforeach ($i in 1..2) {\n  git -C $p commit -m x\n  $p = '~\\knowledge'\n}",
+      "try {\n  $repo = 'C:\\work\\proj'\n} catch { }\n$repo = $repo\ngit -C $repo commit -m x",
+    ])
+    assert.equal(sb('for f in a b; do d=/work/$f; git -C "$d" commit -m x; done'), 'allow')
+    assert.equal(sb('d="$HOME/knowledge"\nif true; then\n  d=/work/a\nelse\n  git -C "$d" add -A\nfi'), 'ask')
+  })
+
+  it('2: reads a list held in a variable', () => {
+    expect('allow', [
+      "$versions = @('0.13.1','0.14.0')\nforeach ($v in $versions) { Set-Content \"C:\\work\\fb-$v.js\" 1 }",
+      "$versions = '0.13.1','0.14.0'\nforeach ($v in $versions) { Set-Content \"C:\\work\\fb-$v.js\" 1 }",
+    ])
+    expect('deny', [
+      "$names = 'a.md','log.md'\nforeach ($n in $names) { Set-Content \"~\\knowledge\\$n\" x }",
+      "$files = '~\\knowledge\\a.md','~\\knowledge\\log.md'\nSet-Content $files x",
+    ])
+  })
+
+  it('3: follows Pop-Location in finally and cd to each value of a loop', () => {
+    expect('allow', [
+      "foreach ($d in 'C:\\work\\a','C:\\work\\b') { Push-Location $d; git commit -m x; Pop-Location }",
+      "try { Push-Location ~\\knowledge; git log -1 } finally { Pop-Location }\ngit commit -m x",
+      "foreach ($d in 'C:\\work\\a','C:\\work\\b') { cd $d; cd sub; git commit -m x }",
+    ])
+    expect('ask', [
+      "foreach ($d in 'C:\\work\\a','C:\\work\\b') { cd $d; cd ..\\..; git commit -m x }",
+      "foreach ($d in 'C:\\work\\a','C:\\Users') { cd $d; git commit -m x }",
+    ])
+    assert.equal(ps('Push-Location ~/knowledge; try { git add -A } finally { Pop-Location }'), 'deny')
+  })
+
+  it('4: reads environment variables, $PWD and $PSScriptRoot', () => {
+    expect('allow', [
+      'Set-Content "$env:TEMP\\probe.txt" 1',
+      "$d = Join-Path $env:LOCALAPPDATA 'tool'\nNew-Item -ItemType Directory -Force -Path $d",
+      'Set-Content "$PWD\\out.txt" 1',
+      'Set-Content (Join-Path $PSScriptRoot out.txt) 1',
+    ])
+    assert.equal(ps('Set-Content "$PWD\\log.md" x', KB), 'deny')
+    assert.equal(ps("$env:TEMP = '~\\knowledge'\nSet-Content \"$env:TEMP\\log.md\" x"), 'deny')
+    assert.equal(ps("if ($x) { $env:TEMP = '~\\knowledge' }\nSet-Content \"$env:TEMP\\log.md\" x"), 'ask')
+    assert.equal(ps('Set-Content "$env:NOT_SET_ANYWHERE\\log.md" x'), 'ask')
+    assert.equal(sb('echo x > "$TMPDIR/a.txt"'), 'allow')
+  })
+
+  it('5: gives $_ each value of a literal list piped to ForEach-Object', () => {
+    expect('allow', [
+      "'a','b' | ForEach-Object { Set-Content \"C:\\work\\$_.txt\" 1 }",
+      "'a','b' | % { Set-Content \"C:\\work\\$_.txt\" 1 }",
+      "$names = 'a','b'\n$names | ForEach-Object {\n  Set-Content \"C:\\work\\$PSItem.txt\" 1\n}",
+    ])
+    assert.equal(ps("'a.md','log.md' | ForEach-Object { Set-Content \"~\\knowledge\\$_\" x }"), 'deny')
+    assert.equal(ps('Get-ChildItem C:\\work | ForEach-Object { Set-Content "$_\\log.md" x }'), 'ask')
+  })
+
+  it('6: reads "$($name)"', () => {
+    assert.equal(ps("$repo = 'C:\\work\\proj'\nSet-Content \"$($repo)\\x.txt\" 1"), 'allow')
+    assert.equal(ps("$k = '~\\knowledge'\nSet-Content \"$($k)\\log.md\" x"), 'deny')
+    assert.equal(ps('Set-Content "$($x.Path)\\log.md" x'), 'ask')
+  })
+
+  it('7: reads a here-string as one quoted value', () => {
+    assert.deepEqual(splitSegments("$t = @'\nIt's { a; b\n'@\nSet-Content x $t"), ["$t = @'\nIt's { a; b\n'@", 'Set-Content x $t'])
+    assert.deepEqual(splitSegments("$t = @'\nnever closed\ngit status"), ["$t = @'", 'never closed', 'git status'])
+    assert.equal(ps("$text = @'\nIt's a note { with braces\n'@\n$f = 'C:\\work\\note.txt'\nSet-Content -LiteralPath $f -Value $text"), 'allow')
+    assert.equal(ps('$t = @"\nhello "there"\n"@\nSet-Content ~\\knowledge\\log.md $t'), 'deny')
+  })
+
+  it('8: checks downloads, unpacked archives and splatted writes', () => {
+    expect('deny', [
+      'Invoke-WebRequest -Uri https://x/y -OutFile ~\\knowledge\\log.md',
+      'Invoke-WebRequest https://x/y -OutFile:~\\knowledge\\.kb\\kb.py',
+      'Expand-Archive C:\\x\\a.zip -DestinationPath ~\\knowledge -Force',
+      'Expand-Archive C:\\x\\a.zip ~\\knowledge',
+    ])
+    expect('ask', [
+      'Expand-Archive C:\\x\\a.zip -DestinationPath ~\\knowledge\\projects\\new',
+      'Invoke-WebRequest https://x/y -OutFile $nowhere',
+      "$p = @{ Path = '~\\knowledge\\log.md'; Value = 'x' }\nSet-Content @p",
+    ])
+    expect('allow', ['Invoke-WebRequest -Uri https://x -OutFile C:\\work\\a.zip', 'Expand-Archive C:\\x\\a.zip -DestinationPath C:\\work\\a'])
+    expect('deny', ['curl -o ~/knowledge/.kb/kb.py https://x', 'tar -xzf a.tgz -C ~/knowledge', 'wget -O ~/knowledge/log.md https://x', 'unzip a.zip -d ~/knowledge'], sb)
+    expect('allow', ['curl -sSLo /tmp/x https://x', 'tar -czf /tmp/kb.tgz -C ~/knowledge .', 'curl https://x', 'wget https://x/a.zip'], sb)
+    assert.equal(sb('wget https://x/a.zip', KB), 'deny')
+  })
+
+  it('9: joins New-Item -Name to its folder and Rename-Item -NewName to the old folder', () => {
+    expect('deny', [
+      'New-Item -Path ~\\knowledge -Name log.md -ItemType File -Force',
+      'New-Item -Path ~\\knowledge\\.kb -Name x.py -ItemType File',
+      'Rename-Item ~\\knowledge\\projects\\a.md -NewName log.md',
+      'Rename-Item ~\\knowledge\\projects\\a.md log.md',
+    ])
+    assert.equal(ps('New-Item -Name log.md -ItemType File', KB), 'deny')
+    expect('allow', ['New-Item -Path C:\\work -Name log.md -ItemType File', 'Rename-Item C:\\work\\a.md -NewName log.md'])
+  })
+
+  it('10: follows cd - and cd + back into the knowledge base', () => {
+    assert.equal(ps('cd ~\\knowledge; cd C:\\work; cd -; git commit -m x'), 'deny')
+    assert.equal(ps('cd C:\\work\\a; cd ~\\knowledge; cd -; git commit -m x'), 'allow')
+    assert.equal(ps('cd ~\\knowledge; cd C:\\work; cd -; cd +; git commit -m x'), 'allow')
+    assert.equal(ps('cd -; git commit -m x'), 'ask')
+    assert.equal(sb('cd ~/knowledge; cd /work; cd -; git add -A'), 'deny')
   })
 })
