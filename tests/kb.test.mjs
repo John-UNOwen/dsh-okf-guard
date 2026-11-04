@@ -181,11 +181,13 @@ describe('kb.py and hooks', { skip }, () => {
       assert.match(modes, /^100755 \S+ 0\t\.githooks\/pre-commit$/m);
     });
 
-    test('the README setup marks the hooks executable before the first commit', () => {
-      const readme = fs.readFileSync(path.join(repo, 'README.md'), 'utf8');
-      const chmod = readme.indexOf('update-index --chmod=+x .githooks/pre-commit .githooks/commit-msg');
-      const first = readme.indexOf('commit -m "kb: start the knowledge base"');
+    test('the setup script marks the hooks executable before the first commit, and the README runs it', () => {
+      const script = fs.readFileSync(path.join(repo, 'bin', 'setup-kb.mjs'), 'utf8');
+      const chmod = script.indexOf("'update-index', '--chmod=+x', ...HOOKS");
+      const first = script.indexOf("'commit', '-q', '-m', 'kb: start the knowledge base'");
       assert.ok(chmod > 0 && first > chmod);
+      const readme = fs.readFileSync(path.join(repo, 'README.md'), 'utf8');
+      assert.match(readme, /npx -y github:John-UNOwen\/dsh-okf-guard/);
     });
 
     test('hook_installed() needs an executable hook outside Windows', () => {
@@ -450,6 +452,34 @@ describe('kb.py and hooks', { skip }, () => {
       assert.match(r.out, /pre-commit hook is not installed/);
       assert.match(r.out, /Agents cannot install it: tell the user to run git config core\.hooksPath \.githooks in a terminal/);
       assert.match(r.out, /kb check: OK/);
+    });
+  });
+
+  describe('#14 setup script', () => {
+    const setup = (...args) => run(tmp, process.execPath, [path.join(repo, 'bin', 'setup-kb.mjs'), ...args]);
+
+    test('creates a knowledge base with hooks and a first commit', () => {
+      const d = path.join(tmp, 'setup-new');
+      const r = setup(d);
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /Knowledge base created at/);
+      assert.equal(git(d, 'config', 'core.hooksPath').out.trim(), '.githooks');
+      assert.equal(git(d, 'log', '--format=%s').out.trim(), 'kb: start the knowledge base');
+      assert.deepEqual(status(d), []);
+      for (const h of ['pre-commit', 'commit-msg']) assert.match(git(d, 'ls-files', '-s', `.githooks/${h}`).out, /^100755 /);
+      // The hooks run: an edit without a log line is refused.
+      write(d, 'general/x.md', '---\ntype: Reference\ntitle: X\ndescription: x.\n---\n# X\n');
+      git(d, 'add', '-A');
+      assert.notEqual(gitCommit(d, '-m', 'kb: sneaky').code, 0);
+    });
+
+    test('leaves an existing, non-empty folder alone', () => {
+      const d = path.join(tmp, 'setup-existing');
+      write(d, 'notes.txt', 'mine\n');
+      const r = setup(d);
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /already exists and is not empty/);
+      assert.deepEqual(fs.readdirSync(d), ['notes.txt']);
     });
   });
 

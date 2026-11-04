@@ -36,56 +36,48 @@ handoffs), and that changes go through `kb.py`. The section is only added when `
 
 Everything outside the knowledge base is left alone.
 
-## Set up a knowledge base
-
-The plugin guards an existing knowledge base. This repo ships a starter one in
-[`template/`](template): `kb.py` (the tool agents use), the git hooks that check
-every commit, and empty root, `general` and `projects` indexes.
-
-You need [git](https://git-scm.com/), Python 3.8 or later, and the
-[okf](https://github.com/W4G1/okf) command-line tool:
+## Install
 
 ```powershell
-cargo install okf
+dsh plugin --profile web add github:John-UNOwen/dsh-okf-guard
 ```
 
-`kb.py` looks for okf in `OKF_EXE`, then on `PATH`, then in
-`%USERPROFILE%\.cargo\bin`.
-
-Create the knowledge base at `%USERPROFILE%\knowledge` (PowerShell, from a
-clone of this repo; the GitHub install leaves `template/` out):
+Restart DSH afterwards. To get a newer version later:
 
 ```powershell
-git clone https://github.com/John-UNOwen/dsh-okf-guard.git
-cd dsh-okf-guard
-$kb = "$env:USERPROFILE\knowledge"
-Copy-Item -Recurse .\template $kb
-git -C $kb init -b main
-git -C $kb config core.hooksPath .githooks
-python "$kb\.kb\kb.py" log Created index.md 'knowledge base'
-git -C $kb add -A
-git -C $kb update-index --chmod=+x .githooks/pre-commit .githooks/commit-msg
-git -C $kb commit -m "kb: start the knowledge base"
+dsh plugin --profile web update dsh-okf-guard
 ```
 
-The `log` line writes the first dated entry in `log.md`, which okf requires.
-The `update-index` line records the hooks as executable. Without it, clones on
-macOS and Linux get them as plain files, and git skips them without a word.
-On macOS or Linux, use `~/knowledge` and `python3`, and run
-`chmod +x ~/knowledge/.githooks/*` before the first commit.
+## Set up a knowledge base (once)
+
+Skip this if you already have one at `%USERPROFILE%\knowledge`. The plugin
+guards a knowledge base; it doesn't create one. To start a new one, you need
+[git](https://git-scm.com/) with your name and email set, Python 3.8 or later,
+and the [okf](https://github.com/W4G1/okf) tool (`cargo install okf`). Then run:
+
+```powershell
+npx -y github:John-UNOwen/dsh-okf-guard
+```
+
+That creates `%USERPROFILE%\knowledge` from [`template/`](template), with
+`kb.py` (the tool agents use), the git hooks that check every commit, and empty
+indexes, and makes the first commit. It works the same on macOS and Linux.
+Give a folder to put it somewhere else (`npx -y github:John-UNOwen/dsh-okf-guard D:\kb`),
+and set `knowledgeRoot` to match (see Settings). It never touches a folder that
+already has files in it.
 
 Then try it:
 
 ```powershell
-python "$kb\.kb\kb.py" new projects/my-app/decisions/use-sqlite.md --type Decision --title 'Use SQLite for the cache' --description 'Why SQLite beats a JSON file for the cache.' --by human:me
+python "$env:USERPROFILE\knowledge\.kb\kb.py" new projects/my-app/decisions/use-sqlite.md --type Decision --title 'Use SQLite for the cache' --description 'Why SQLite beats a JSON file for the cache.' --by human:me
 ```
 
-Open the new file, replace every `TODO(kb)` line with real text, and commit it.
+Replace every `TODO(kb)` line in the new file with real text, then commit it.
 `kb.py commit` stages the concept with its index and log lines, and the hook
 checks the result:
 
 ```powershell
-python "$kb\.kb\kb.py" commit -m 'kb: add my-app decision use-sqlite' projects/my-app/decisions/use-sqlite.md
+python "$env:USERPROFILE\knowledge\.kb\kb.py" commit -m 'kb: add my-app decision use-sqlite' projects/my-app/decisions/use-sqlite.md
 ```
 
 To keep the knowledge base on more than one PC, add a remote and push as usual.
@@ -93,34 +85,6 @@ On each other clone, run `git config core.hooksPath .githooks` once, because git
 doesn't copy that setting. If your Windows account name could end up in paths
 in some other form, add it with `git config kb.privateName "<name>"`; the hooks
 and this plugin both block it.
-
-To use a different folder, set `knowledgeRoot` (see Settings).
-
-## Install
-
-From GitHub:
-
-```powershell
-dsh plugin --profile web add github:John-UNOwen/dsh-okf-guard
-```
-
-Add `#<commit>` to pin a version, e.g. `github:John-UNOwen/dsh-okf-guard#a26ec64`.
-
-Or from a local clone:
-
-```powershell
-dsh plugin --profile web add "file:$env:USERPROFILE\Documents\GitHub\dsh-okf-guard"
-```
-
-Either way, DSH copies the plugin into the profile and turns it on. Restart DSH
-afterwards.
-
-To update, remove the plugin and add it again with the same command:
-
-```powershell
-dsh plugin --profile web remove dsh-okf-guard
-dsh plugin --profile web add github:John-UNOwen/dsh-okf-guard
-```
 
 ## Settings
 
@@ -142,8 +106,12 @@ Override them in the profile's `cordis.patch.yml`:
 - When a session's approval policy is "never" (the full-access preset), DSH
   turns every "ask" into a refusal, so agents can't push there. Push yourself.
 - It reads commands, it doesn't run them. A command that writes in an unusual
-  way (for example a `python -c` one-liner, or a path kept in a variable) can
-  get past it. The pre-commit hook still checks everything at commit time.
+  way (for example a `python -c` one-liner) can get past it. The pre-commit
+  hook still checks everything at commit time.
+- Variables set in the same command are followed (`$repo = '...'`,
+  `Join-Path`, `"$repo\x"`). One set in a loop, an `if`, a function or from a
+  command's output can't be followed, so a write or a knowledge base git
+  command that uses it asks first. Quoted literal paths never ask.
 - It knows where a command runs from the session folder, the shell tool's
   `workdir`, `cd`, `pushd` and `popd` in the same command, `git -C`,
   `--git-dir`, `--work-tree`, and `GIT_DIR` or `GIT_WORK_TREE` set in the same

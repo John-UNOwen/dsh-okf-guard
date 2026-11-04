@@ -14,8 +14,13 @@
     ".": "./lib/index.js",
     "./package.json": "./package.json"
   },
+  "bin": {
+    "dsh-okf-guard": "bin/setup-kb.mjs"
+  },
   "files": [
     "lib",
+    "bin",
+    "template",
     "cordis.patch.yml",
     "README.md"
   ],
