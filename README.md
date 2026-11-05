@@ -111,7 +111,7 @@ Override them in the profile's `cordis.patch.yml`:
   way (for example a `python -c` one-liner) can get past it. The pre-commit
   hook still checks everything at commit time.
 - Variables set in the same command are followed (`$repo = '...'`,
-  `Join-Path`, `"$repo\x"`, `"$($repo)\x"`), also inside a block, and so are
+  `Join-Path`, `"$repo\x"`, `"$($repo)\x"`, `$repo + '\x'`), also inside a block, and so are
   environment variables, `$PWD`, loops and `ForEach-Object` over a literal
   list (`'a','b'`, `1..3`, or a variable holding one), checked once per value.
   A variable set inside an `if`, `try` or loop is unknown once the block ends,
