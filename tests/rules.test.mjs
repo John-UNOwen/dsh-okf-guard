@@ -1120,3 +1120,60 @@ describe('a bash script passed in a pwsh string', () => {
     assert.equal(kind(sh(B + '& $b -c "printf a > $S/f"')), 'ask')
   })
 })
+
+describe('paths joined with +', () => {
+  const V = "$src = 'C:\\mfg\\src'\n$bak = 'C:\\mfg\\before'\n$k = '~\\knowledge'\n"
+  it('reads strings and variables joined with + when every piece is known', () => {
+    for (const c of [
+      // The reported command: a backup with ($bak + '\x') paths, then git status elsewhere.
+      V + "New-Item -ItemType Directory -Force -LiteralPath ($bak + '\\handlers') | Out-Null\n" +
+        "Copy-Item -LiteralPath ($src + '\\handlers\\aog.ts') -Destination ($bak + '\\handlers\\aog.ts') -Force\n" +
+        "git -C 'C:\\mfg\\tmp\\asphyxia_plugins' status --porcelain | Select-Object -First 5",
+      V + "$p = $bak + '\\a.ts'\nSet-Content -LiteralPath $p x",
+      V + "Set-Content ($bak + \"\\$src.txt\") x",
+      V + "Set-Content ((Join-Path $bak 'x') + '.txt') x",
+    ]) {
+      assert.equal(kind(sh(c)), 'allow', c)
+    }
+  })
+  it('still catches the knowledge base, and asks when a piece is unknown', () => {
+    for (const c of [
+      V + "Set-Content ($k + '\\log.md') x",
+      V + "$p = $k + '\\.kb\\kb.py'\nSet-Content $p x",
+      V + "Copy-Item C:\\x\\a -Destination ($k + '\\.git\\hooks\\pre-commit')",
+      V + "git -C ($k + '') add -A",
+    ]) {
+      assert.equal(kind(sh(c)), 'deny', c)
+    }
+    for (const c of [
+      V + "Set-Content ($nowhere + '\\log.md') x",
+      V + "Set-Content ($bak + $x.Name) x",
+      V + "Set-Content ((Get-KbPath) + '\\log.md') x",
+    ]) {
+      assert.equal(kind(sh(c)), 'ask', c)
+    }
+  })
+})
+
+describe('variables in the value of a write', () => {
+  it('reads -Value $p.Id and the text of Set-Content as text, not as a path', () => {
+    const start =
+      "$p = Start-Process -FilePath 'node' -ArgumentList 'a.js' -WorkingDirectory 'C:\\work\\my dir' -PassThru -WindowStyle Hidden " +
+      "-RedirectStandardOutput 'C:\\work\\my dir\\out.log' -RedirectStandardError 'C:\\work\\my dir\\err.log'\n"
+    for (const c of [
+      // The reported command: save the started process's id next to its logs.
+      start + "Set-Content -LiteralPath 'C:\\mfg\\tmp\\lane_pid.txt' -Value $p.Id -Encoding utf8\n\"pid=$($p.Id)\"",
+      "Set-Content -Path C:\\work\\a.txt -Value $p.Id",
+      "Set-Content C:\\work\\a.txt $p.Id",
+      "Add-Content -LiteralPath 'C:\\work\\a.txt' -Value $r.Content -Encoding $enc",
+    ]) {
+      assert.equal(kind(sh(c)), 'allow', c)
+    }
+  })
+  it('still checks a variable in the path itself', () => {
+    assert.equal(kind(sh('Set-Content -LiteralPath $f.FullName -Value $p.Id')), 'ask')
+    assert.equal(kind(sh('Set-Content $f.FullName $p.Id')), 'ask')
+    assert.equal(kind(sh("$f = '~\\knowledge\\log.md'\nSet-Content -Value $p.Id -LiteralPath $f")), 'deny')
+    assert.equal(kind(sh("Set-Content -LiteralPath '~\\knowledge\\log.md' -Value $p.Id")), 'deny')
+  })
+})
