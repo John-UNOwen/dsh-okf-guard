@@ -1088,3 +1088,35 @@ describe('variable review: harmless commands pass, writes into the knowledge bas
     assert.equal(sb('cd ~/knowledge; cd /work; cd -; git add -A'), 'deny')
   })
 })
+
+describe('a bash script passed in a pwsh string', () => {
+  const B = "$b='C:\\Program Files\\Git\\bin\\bash.exe'\n"
+  it('reads > inside quotes as text, not a redirect', () => {
+    // The reported command: a bash script in a here-string, writing to "$S/..." under a scratch folder.
+    const reported =
+      "$ProgressPreference='SilentlyContinue'\n" + B + "& $b -c @'\nset -e\nS=/c/mfgtmp/lane_kit_test\nrm -rf \"$S\"\n" +
+      "mkdir -p \"$S/core\" \"$S/sec\"\nprintf '%s\\n' 'port=18083' '[mfg@asphyxia]' > \"$S/core/config.ini\"\n" +
+      "printf 'x\\n' > \"$S/sec/presenter.secret\"\nchmod 600 \"$S/sec/presenter.secret\"\nls -l \"$S/sec\"\n'@\n\"setup exit $LASTEXITCODE\""
+    for (const c of [
+      reported,
+      B + "& $b -c 'S=/c/x; printf a > \"$S/f\"'",
+      "& 'C:\\Program Files\\Git\\bin\\bash.exe' -c @'\nS=/c/x\nprintf a > \"$S/f\"\n'@",
+      'Write-Output "a > $x"',
+      "git commit -m 'speed > 2x'",
+    ]) {
+      assert.equal(kind(sh(c)), 'allow', c)
+    }
+  })
+  it('checks the script as bash, also when the program is in a variable', () => {
+    for (const c of [
+      B + "& $b -c @'\nS=~/knowledge\nprintf a > \"$S/log.md\"\n'@",
+      B + "& $b -c 'cd ~/knowledge && git add -A'",
+      "& 'C:\\Program Files\\Git\\bin\\bash.exe' -c 'echo x > ~/knowledge/log.md'",
+      'cmd /c "echo x > ~\\knowledge\\log.md"',
+    ]) {
+      assert.equal(kind(sh(c)), 'deny', c)
+    }
+    // "..." is expanded by pwsh first, so the inner script cannot see what $S is.
+    assert.equal(kind(sh(B + '& $b -c "printf a > $S/f"')), 'ask')
+  })
+})
