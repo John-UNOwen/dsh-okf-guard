@@ -2,3 +2,6 @@ node_modules/
 *.log
 *.tgz
 .DS_Store
+# Ad-hoc probe scripts in the repo root; the tests live in tests/.
+/probe*.mjs
+/probe*.ps1
