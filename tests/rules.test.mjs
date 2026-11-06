@@ -1177,3 +1177,37 @@ describe('variables in the value of a write', () => {
     assert.equal(kind(sh("Set-Content -LiteralPath '~\\knowledge\\log.md' -Value $p.Id")), 'deny')
   })
 })
+
+describe('review of 2026-11-06', () => {
+  it('a protected file that is only read is not a write target', () => {
+    for (const c of [
+      'Out-File C:\\work\\note.md (Get-Content ~/knowledge/log.md)',
+      'Set-Content C:\\work\\note.md (Get-Content ~/knowledge/log.md)',
+      'Add-Content C:\\work\\note.md -Value (Get-Content ~/knowledge/log.md)',
+      'Remove-Item C:\\work\\* -Exclude ~/knowledge/log.md',
+      'if (Test-Path ~/knowledge/log.md) { Set-Content C:\\work\\x 1 }',
+      'Set-Content -LiteralPath C:\\work\\a.txt -Value ~/knowledge/log.md',
+      'Add-Content C:\\work\\a.md "see ~/knowledge/log.md for history"',
+    ]) {
+      assert.equal(kind(sh(c)), 'allow', c)
+    }
+    for (const c of [
+      'if ($a) { Set-Content C:\\x 1 } else { Set-Content ~/knowledge/log.md 1 }',
+      'Set-Content -Path:~/knowledge/log.md x',
+      'Set-Content x -Path ~/knowledge/log.md',
+      'Get-Item x | Out-Null; Add-Content -Path ~/knowledge/log.md -Value y',
+      '[IO.File]::AppendAllText("~/knowledge/log.md", "x")',
+    ]) {
+      assert.equal(kind(sh(c)), 'deny', c)
+    }
+    assert.equal(kind(bash("sed -i 's/a/b/' ~/knowledge/log.md")), 'deny')
+  })
+  it('refuses a global or system core.hooksPath from any folder', () => {
+    for (const c of ['git config --global core.hooksPath C:\\empty', 'git config --system core.hooksPath x', 'git config --global --unset core.hooksPath']) {
+      assert.equal(kind(sh(c)), 'deny', c)
+    }
+    for (const c of ['git config --global --get core.hooksPath', 'git config core.hooksPath .husky', 'git config --global user.name x']) {
+      assert.equal(kind(sh(c)), 'allow', c)
+    }
+  })
+})
