@@ -1211,3 +1211,34 @@ describe('review of 2026-11-06', () => {
     }
   })
 })
+
+describe('[ref] arguments', () => {
+  const environ = { TEMP: 'C:\\Temp' }
+  const g = createGuard({ knowledgeRoot: '~/knowledge' }, { ...env, environ })
+  const ps = (command) => kind(g.decide({ name: 'pwsh', arguments: { command }, agent: { session: { header: { cwd: OTHER } } } }))
+  it('makes only the variable after [ref] unknown', () => {
+    // The reported command: parse a script for errors, run it, keep its output in TEMP.
+    const reported =
+      "$errs = $null\n[System.Management.Automation.Language.Parser]::ParseFile(\"$env:TEMP\\x.ps1\", [ref]$null, [ref]$errs) | Out-Null\n" +
+      "if ($errs.Count -eq 0) {\n  pwsh -NoProfile -File \"$env:TEMP\\x.ps1\" 2>&1 | Set-Content -LiteralPath \"$env:TEMP\\x_out.txt\" -Encoding utf8\n}"
+    assert.equal(ps(reported), 'allow')
+    assert.equal(ps("$f = 'C:\\work\\a.txt'\n[int]::TryParse('1', [ref]$n) | Out-Null\nSet-Content -LiteralPath $f $n"), 'allow')
+    assert.equal(ps("$f = 'C:\\work\\a.txt'\n[x]::Fill([ref]$f)\nSet-Content -LiteralPath $f 1"), 'ask')
+    assert.equal(ps("$f = 'C:\\work\\a.txt'\n[x]::Fill([ref]${f})\nSet-Content -LiteralPath $f 1"), 'ask')
+  })
+  it('still makes every variable unknown for [ref] on anything else', () => {
+    assert.equal(ps("$f = 'C:\\work\\a.txt'\n[x]::Fill([ref]$o.Path)\nSet-Content -LiteralPath $f 1"), 'ask')
+    assert.equal(ps("$f = 'C:\\work\\a.txt'\n$r = [ref]$o\n[x]::Fill([ref]($g))\nSet-Content -LiteralPath $f 1"), 'ask')
+  })
+})
+
+describe('positional values after a named path', () => {
+  it('reads every positional as the value once the path is given by name', () => {
+    for (const c of ["$f = 'C:\\work\\a.txt'\nSet-Content -LiteralPath $f $n", 'Add-Content -Path C:\\work\\a.txt $text', 'Out-File -FilePath C:\\work\\a.txt -InputObject $x']) {
+      assert.equal(kind(sh(c)), 'allow', c)
+    }
+    assert.equal(kind(sh('Set-Content -LiteralPath $f $n')), 'ask')
+    assert.equal(kind(sh('Set-Content $f $n')), 'ask')
+    assert.equal(kind(sh("$k = '~\\knowledge\\log.md'\nSet-Content -LiteralPath $k $n")), 'deny')
+  })
+})
