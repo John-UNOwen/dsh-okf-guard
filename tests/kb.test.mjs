@@ -551,4 +551,108 @@ describe('kb.py and hooks', { skip }, () => {
       assert.match(r.out, /grows to/);
     });
   });
+
+  describe('review of 2026-11-06', () => {
+    const filler = (n) => Array.from({ length: n }, (_, i) => `Run ${i}: the step finished and the numbers matched the earlier run.`).join('\n') + '\n';
+
+    test('kb.py new refuses a private name in the path before writing anything', () => {
+      const d = clone();
+      const r = kb(d, 'new', 'projects/zeta/notes/n.md', '--type', 'Reference', '--title', 'N note', '--description', 'N thing.', '--by', 'human:test');
+      assert.notEqual(r.code, 0, r.out);
+      assert.match(r.out, /contains the Windows account name/);
+      assert.doesNotMatch(r.out, /zeta/);
+      assert.deepEqual(status(d), []);
+    });
+
+    test('kb.py new caps the description', () => {
+      const d = clone();
+      const r = kb(d, 'new', 'projects/app-r/notes/d.md', '--type', 'Reference', '--title', 'D note', '--description', 'x'.repeat(601), '--by', 'human:test');
+      assert.notEqual(r.code, 0, r.out);
+      assert.match(r.out, /--description is 601 characters; the limit is 600/);
+      assert.deepEqual(status(d), []);
+    });
+
+    test('a log line like one from an earlier day still counts as new', () => {
+      const d = clone();
+      newConcept(d, 'projects/app-r/notes/c.md', 'C note');
+      commitNew(d, 'projects/app-r/notes/c.md');
+      write(d, 'projects/app-r/notes/c.md', read(d, 'projects/app-r/notes/c.md') + '\nMore text.\n');
+      assert.equal(kb(d, 'touch', 'projects/app-r/notes/c.md', '--note', 'cache note').code, 0);
+      assert.equal(kb(d, 'commit', '-m', 'kb: update c', 'projects/app-r/notes/c.md').code, 0);
+      // As if that commit was made on an earlier day.
+      const today = read(d, 'log.md').match(/^## (\d{4}-\d{2}-\d{2})$/m)[1];
+      write(d, 'log.md', read(d, 'log.md').replace(`## ${today}`, '## 2020-01-01'));
+      assert.equal(gitCommit(d, '-q', '-am', 'kb: move the log group to an earlier day').code, 0);
+      write(d, 'projects/app-r/notes/c.md', read(d, 'projects/app-r/notes/c.md') + '\nEven more.\n');
+      assert.equal(kb(d, 'touch', 'projects/app-r/notes/c.md', '--note', 'cache note').code, 0);
+      const r = kb(d, 'commit', '-m', 'kb: update c again', 'projects/app-r/notes/c.md');
+      assert.equal(r.code, 0, r.out);
+      assert.equal((headFile(d, 'log.md').match(/cache note/g) || []).length, 2);
+      assert.match(headFile(d, 'log.md'), new RegExp(`## ${today}\\n\\* \\*\\*Updated\\*\\*: \\[C note\\]`));
+    });
+
+    test('an index is held to the placeholder rule and the 20 KB rule for its other text', () => {
+      const d = clone();
+      newConcept(d, 'projects/app-r/notes/a.md', 'A note');
+      commitNew(d, 'projects/app-r/notes/a.md');
+      const idx = 'projects/app-r/notes/index.md';
+      const head = read(d, idx);
+      write(d, idx, head + '\nTODO(kb): describe this folder\n');
+      let r = kb(d, 'commit', '-m', 'kb: index todo', idx);
+      assert.notEqual(r.code, 0, r.out);
+      assert.match(r.out, /index\.md: still has TODO\(kb\) placeholder lines/);
+      write(d, idx, head + '\n' + filler(330));
+      r = kb(d, 'commit', '-m', 'kb: index history', idx);
+      assert.notEqual(r.code, 0, r.out);
+      assert.match(r.out, /KB of text besides its list lines, over the 20 KB limit/);
+      // A long list is fine: an index lists every concept in its folder.
+      const list = Array.from({ length: 330 }, (_, i) => `- [Old ${i}](/projects/app-r/notes/a.md) - the same concept, listed again for size.`).join('\n');
+      write(d, idx, head + list + '\n');
+      r = kb(d, 'check', idx);
+      assert.doesNotMatch(r.out, /besides its list lines/);
+    });
+
+    test('an oversized concept cannot grow its frontmatter step by step past 4 KB', () => {
+      const d = clone();
+      const rel = 'projects/app-r/notes/big.md';
+      newConcept(d, rel, 'Big note');
+      write(d, rel, read(d, rel) + filler(280));
+      commitNew(d, rel);
+      let blocked = null;
+      for (let i = 1; i <= 4 && !blocked; i++) {
+        write(d, rel, read(d, rel).replace(/^(description: .*?)(')?$/m, (m, a, q) => `${a} ${'more '.repeat(380)}${q || ''}`));
+        assert.equal(kb(d, 'touch', rel, '--note', `round ${i}`).code, 0);
+        const r = kb(d, 'commit', '-m', `kb: grow big ${i}`, rel);
+        if (r.code !== 0) blocked = { i, out: r.out };
+      }
+      assert.ok(blocked, 'the frontmatter grew past 4 KB without a block');
+      assert.match(blocked.out, /grows to/);
+      assert.ok(blocked.i >= 2, `blocked already in round ${blocked.i}; small repairs should pass`);
+    });
+
+    test('kb.py check names no unchanged file as changed', () => {
+      const d = clone();
+      newConcept(d, 'projects/app-r/notes/t.md', 'T note');
+      commitNew(d, 'projects/app-r/notes/t.md');
+      const r = kb(d, 'check', 'projects/app-r/notes/t.md');
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /nothing to check/);
+    });
+
+    test('kb.py commit takes the old path of a git mv along', () => {
+      const d = clone();
+      newConcept(d, 'projects/app-r/notes/r.md', 'R note');
+      commitNew(d, 'projects/app-r/notes/r.md');
+      assert.equal(git(d, 'mv', 'projects/app-r/notes/r.md', 'projects/app-r/notes/renamed.md').code, 0);
+      const idx = 'projects/app-r/notes/index.md';
+      write(d, idx, read(d, idx).replace('/projects/app-r/notes/r.md', '/projects/app-r/notes/renamed.md'));
+      assert.equal(kb(d, 'log', 'Updated', 'projects/app-r/notes/renamed.md', 'renamed from r').code, 0);
+      const r = kb(d, 'commit', '-m', 'kb: rename r', 'projects/app-r/notes/renamed.md');
+      assert.equal(r.code, 0, r.out);
+      const tree = headTree(d);
+      assert.ok(tree.includes('projects/app-r/notes/renamed.md') && !tree.includes('projects/app-r/notes/r.md'));
+      assert.doesNotMatch(headFile(d, idx), /notes\/r\.md/);
+      assert.deepEqual(status(d), []);
+    });
+  });
 });

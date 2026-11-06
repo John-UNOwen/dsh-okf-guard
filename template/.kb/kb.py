@@ -38,7 +38,9 @@ BOM = b"\xef\xbb\xbf"
 LOG_VERBS = ("Added", "Updated", "Created", "Deprecated")
 NOTE_MAX = 200
 SIZE_WARN = 20 * 1024
-FM_SLACK = 2 * 1024  # how much an oversized concept's frontmatter may grow (repairs), body growth is never allowed
+FM_SLACK = 2 * 1024  # how much an oversized concept's frontmatter may grow in one commit (repairs)
+FM_MAX = 4 * 1024  # and the size it may grow to; body growth is never allowed
+DESC_MAX = 600  # a new concept's description, which kb.py new also copies into the folder index
 STATUSES = ("stable", "draft")
 PLACEHOLDER = "TODO(kb)"
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
@@ -277,10 +279,22 @@ def part_sizes(data):
 
 def grows_too_much(data, old_data):
     """Whether an edit grows a concept the 20 KB rule refuses: any body growth, or the
-    frontmatter growing by more than FM_SLACK. Small frontmatter repairs stay possible."""
+    frontmatter growing by more than FM_SLACK or past FM_MAX. Small frontmatter repairs stay
+    possible, and the FM_MAX cap is absolute, so many small steps cannot add up."""
     new_fm, new_body = part_sizes(data)
     old_fm, old_body = part_sizes(old_data) if old_data else (0, 0)
-    return new_body > old_body or new_fm > old_fm + FM_SLACK
+    return new_body > old_body or (new_fm > old_fm and (new_fm > old_fm + FM_SLACK or new_fm > FM_MAX))
+
+
+INDEX_LIST_RE = re.compile(r"^\s*[-*] \[")
+
+
+def index_prose(data):
+    """Bytes of an index that are not list lines or headings: the text the 20 KB rule speaks to.
+    List lines are allowed to grow, since a folder index lists every concept in its folder."""
+    t = (data[len(BOM):] if data.startswith(BOM) else data).replace(b"\r\n", b"\n")
+    return sum(len(l) + 1 for l in t.split(b"\n")
+               if l.strip() and not INDEX_LIST_RE.match(l.decode("utf-8", "replace")) and not l.startswith(b"#"))
 
 
 def title_from_name(name):
@@ -398,6 +412,18 @@ def add_log_line(verb, rel, note=None, title=None):
     out("log: %s %s" % (verb, rel))
 
 
+def log_entries(text):
+    """Each log line with the day heading above it, counted: Counter of (day, line)."""
+    day, entries = None, collections.Counter()
+    for l in text.split("\n"):
+        m = HEADING_RE.match(l)
+        if m:
+            day = m.group(1)
+        elif LOG_LINE_RE.match(l.strip()):
+            entries[(day, l)] += 1
+    return entries
+
+
 def insert_log_line(lines, day, line):
     """Put line at the top of the ## day group, creating the heading in date order if missing."""
     for i, l in enumerate(lines):
@@ -467,6 +493,10 @@ def cmd_new(a):
     if not rel.endswith(".md"):
         rel += ".md"
     path = PurePosixPath(rel)
+    # Before anything is written: the folders, index lines and log lines all carry the path.
+    if has_private(rel):
+        fail("%s contains the Windows account name (or a kb.privateName). Pick a folder and file "
+             "name without it." % mask(rel))
     if is_reserved(rel):
         fail("index.md and log.md are reserved; a concept needs its own name.")
     if not NAME_RE.match(path.stem):
@@ -481,6 +511,10 @@ def cmd_new(a):
     ctype = one_line("--type", a.type)
     title = one_line("--title", a.title)
     desc = one_line("--description", a.description)
+    if len(desc) > DESC_MAX:
+        fail("--description is %d characters; the limit is %d. It is one sentence saying what the "
+             "concept is and when it matters, and it is copied into the folder index; the details "
+             "go in the body." % (len(desc), DESC_MAX))
     by = one_line("--by", a.by)
     if not ACTOR_RE.match(by):
         fail("--by must look like producer/version (dsh/qwen3.8), human:<id> or process:<id>.")
@@ -968,10 +1002,15 @@ def do_check(mode, files):
                                 seen.add(c[1])
                                 changes.append(c)
                         continue
-                    in_head = cat_blobs(["%s:%s" % (base, rel)]).get("%s:%s" % (base, rel)) is not None
+                    head_blob = cat_blobs(["%s:%s" % (base, rel)]).get("%s:%s" % (base, rel))
+                    in_head = head_blob is not None
                     exists = (ROOT / rel).is_file()
                     if not in_head and not exists:
                         fail("%s does not exist." % rel)
+                    # The same as in HEAD (line ends aside): nothing changed, nothing to check.
+                    if in_head and exists and (ROOT / rel).read_bytes().replace(b"\r\n", b"\n") == \
+                            head_blob.replace(b"\r\n", b"\n"):
+                        continue
                     if rel not in seen:
                         seen.add(rel)
                         changes.append(("D" if not exists else ("M" if in_head else "A"), rel, None))
@@ -1086,10 +1125,12 @@ def do_check(mode, files):
                 diags = []
 
         # Log lines this change adds, for the "every changed concept is logged" rule.
+        # A line counts per day: the same line as one from an earlier day (same verb, file and
+        # note) is still new, because kb.py log puts it under today's heading.
         head_log = text_of(cat_blobs(["%s:log.md" % base]).get("%s:log.md" % base)) or ""
-        head_log_lines = set(head_log.split("\n"))
         new_log = text_of(new_content("log.md")) or ""
-        new_log_lines = [l for l in new_log.split("\n") if l not in head_log_lines and LOG_LINE_RE.match(l.strip())]
+        fresh = log_entries(new_log) - log_entries(head_log)
+        new_log_lines = [l for (day, l), k in fresh.items() for _ in range(k)]
         for l in new_log_lines:
             t = LINK_TARGET_RE.search(l)
             if t and not exists_now(t.group(1)) and t.group(1) not in gone:
@@ -1162,6 +1203,15 @@ def do_check(mode, files):
                             index_dropped.add((p, concept_id(t)))
                             block(p, "no longer lists /%s, which stays in the knowledge base. Put the "
                                      "line back, or delete that file in the same commit." % t)
+                if PLACEHOLDER in text:
+                    block(p, "still has %s placeholder lines. Write the real text." % PLACEHOLDER)
+                # The list may grow with its folder; other text in an index is held to the 20 KB rule.
+                prose = index_prose(data)
+                old_prose = index_prose(old_blobs.get("%s:%s" % (base, old_of.get(p, p))) or b"")
+                if prose > SIZE_WARN and prose > old_prose:
+                    block(p, "has %.1f KB of text besides its list lines, over the 20 KB limit. An index "
+                             "lists the concepts in its folder with one line each; put the text in a "
+                             "concept, and run history in the commit message." % (prose / 1024))
                 continue
             lines = text.split("\n")
             end = fm_end(lines)
@@ -1294,7 +1344,15 @@ def partial_log(head_text, work_text, keep):
     """log.md as committed: HEAD plus only the new lines that link to a file in keep,
     each placed after the line it follows in the working file, so the order matches."""
     lines = head_text.rstrip("\n").split("\n") if head_text else ["# Directory Update Log"]
-    head_set, day, prev = set(lines), None, None
+    # Lines count with their day: the same text under an earlier day is a different line.
+    head_pairs, cur = set(), None
+    for l in lines:
+        m = HEADING_RE.match(l)
+        if m:
+            cur = m.group(1)
+        else:
+            head_pairs.add((cur, l))
+    day, prev = None, None
     for l in work_text.rstrip("\n").split("\n"):
         m = HEADING_RE.match(l)
         if m:
@@ -1302,18 +1360,31 @@ def partial_log(head_text, work_text, keep):
             continue
         if day is None or not l.strip():
             continue
-        if l in head_set:
+        if (day, l) in head_pairs:
             prev = l
             continue
         t = LINK_TARGET_RE.search(l)
         if not (t and t.group(1) in keep):
             continue
-        if prev is not None and prev in lines:
-            lines.insert(lines.index(prev) + 1, l)
+        at = day_index(lines, day, prev) if prev is not None else None
+        if at is not None:
+            lines.insert(at + 1, l)
         else:
             insert_log_line(lines, day, l)
         prev = l
     return "\n".join(lines) + "\n"
+
+
+def day_index(lines, day, text):
+    """Where text sits under the ## day heading in lines, or None."""
+    cur = None
+    for i, l in enumerate(lines):
+        m = HEADING_RE.match(l)
+        if m:
+            cur = m.group(1)
+        elif cur == day and l == text:
+            return i
+    return None
 
 
 def partial_index(head_text, work_text, keep):
@@ -1357,6 +1428,15 @@ def cmd_commit(a):
             fail("%s is a folder; name the files." % rel)
         rels.append(rel)
     rels = list(dict.fromkeys(rels))
+    # What is staged already. A rename (git mv) shows as its new path only in --name-only, so read
+    # --name-status: the old path of a rename to a named file comes along, with its index line.
+    staged = set()
+    for st, p, old in parse_name_status(git("diff", "--cached", "--name-status", "-z", "-M")):
+        staged.add(p)
+        if old:
+            staged.add(old)
+            if p in rels and old not in rels:
+                rels.append(old)
     changed = changed_paths()
     for p in rels:
         if p not in changed:
@@ -1378,12 +1458,15 @@ def cmd_commit(a):
             d = d.parent
     if not any(p in changed for p in rels + auto):
         fail("none of these files has changes to commit.")
-    staged = set(p for p in dec(git("diff", "--cached", "--name-only", "-z")).split("\0") if p)
     others = sorted(staged - set(rels + auto))
     if others:
         fail("other files are already staged: %s. Unstage them with "
              "git restore --staged -- <file>, or name them in this command." % ", ".join(others))
-    code, so, se = run(["git", "add", "--"] + rels)
+    # A path gone from the folder and from the index (the old side of a staged rename or
+    # deletion) has nothing left to add, and git add would fail on it.
+    listed = set(p for p in dec(git("ls-files", "-z", "--", *rels)).split("\0") if p)
+    addable = [p for p in rels if (ROOT / p).exists() or p in listed]
+    code, so, se = run(["git", "add", "--"] + addable) if addable else (0, b"", b"")
     noise = re.compile(r"^warning: (in the working copy of|LF will be replaced|CRLF will be replaced)")
     for l in (dec(so) + dec(se)).splitlines():
         if l.strip() and not noise.match(l):
