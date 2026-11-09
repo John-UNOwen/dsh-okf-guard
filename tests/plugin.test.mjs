@@ -106,6 +106,35 @@ describe('plugin in a real Cordis context', () => {
     assert.equal(d.kind, 'deny')
   })
 
+  it('with approvals off, refuses with its reason instead of asking', async () => {
+    const { ctx } = await setup()
+    const policies = []
+    ctx.provide('approval')
+    ctx.set('approval', { effectivePolicy: (s) => (policies.push(s), 'never') })
+    const exec = call('$p = (Get-Location).Path; Set-Content -LiteralPath "$p\\x.txt" -Value 1')
+    const d = await preExecute(ctx, exec)
+    assert.equal(d.kind, 'deny')
+    assert.match(d.reason, /^okf-guard: .*cannot read\)\. Approvals are off/)
+    assert.match(d.reason, /the user did not reject it/)
+    assert.doesNotMatch(d.reason, /Allow it\?/)
+    assert.equal(d.displayReason.en, d.reason)
+    assert.equal(policies[0], exec.agent.session)
+    // Hard denials and allows are unchanged; another listener's own ask is kept.
+    assert.equal((await preExecute(ctx, call('git -C ~/knowledge add -A'))).kind, 'deny')
+    assert.equal((await preExecute(ctx, call('git status'))).kind, 'allow')
+    ctx.on('tools/pre-execute', async () => ({ kind: 'ask', reason: 'other plugin' }))
+    assert.equal((await preExecute(ctx, call('git -C ~/knowledge push'))).reason, 'other plugin')
+  })
+
+  it('keeps asking when the policy is ask or cannot be read', async () => {
+    for (const service of [{ effectivePolicy: () => 'ask' }, { effectivePolicy: () => { throw new Error('no log') } }, {}]) {
+      const { ctx } = await setup()
+      ctx.provide('approval')
+      ctx.set('approval', service)
+      assert.equal((await preExecute(ctx, call('git -C ~/knowledge push'))).kind, 'ask')
+    }
+  })
+
   it('askBeforePush false lets push through', async () => {
     const { ctx } = await setup({ askBeforePush: false })
     assert.equal((await preExecute(ctx, call('git -C ~/knowledge push'))).kind, 'allow')

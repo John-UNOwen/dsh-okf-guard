@@ -105,8 +105,11 @@ Override them in the profile's `cordis.patch.yml`:
 
 ## Limits
 
-- When a session's approval policy is "never" (the full-access preset), DSH
-  turns every "ask" into a refusal, so agents can't push there. Push yourself.
+- When a session's approval policy is "never" (the full-access preset), there
+  is nobody to ask, so the guard refuses instead of asking. Agents can't push
+  there; push yourself. The model sees the guard's reason and a hint on how to
+  rewrite the command, not DSH's bare "the user rejected tool". A question
+  from another plugin or hook still shows up as DSH's rejection.
 - It reads commands, it doesn't run them. A command that writes in an unusual
   way (for example a `python -c` one-liner) can get past it. The pre-commit
   hook still checks everything at commit time.
