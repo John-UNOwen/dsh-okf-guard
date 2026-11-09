@@ -63,7 +63,7 @@ describe('fix 1: quoting cannot hide a write or a git command', () => {
 describe('fix 2: command substitutions are checked', () => {
   it('denies git and writes inside $( ) and backticks', () => {
     for (const c of [
-      'echo "built $(date +%d); git -C ~/knowledge commit -m x"',
+      'echo "built $(date +%d; git -C ~/knowledge commit -m x)"',
       'Write-Host "x $(git -C ~/knowledge commit -m x)"',
       'Write-Host "x $(git -C "~/knowledge" commit -m "y") z"',
       'Write-Output $(cd ~/knowledge; git add -A)',
@@ -80,6 +80,16 @@ describe('fix 2: command substitutions are checked', () => {
     assert.equal(kind(sh('Write-Host "done in $(Get-Date)"', KB)), 'allow')
     assert.equal(kind(bash('echo "today `date +%d`"', KB)), 'allow')
     assert.equal(kind(sh('$x = "git $(git --version)"', KB)), 'allow')
+  })
+  it('reads the text around $( ) in a string as text, not as a command', () => {
+    for (const c of [
+      'echo "built $(date +%d); git -C ~/knowledge commit -m x"',
+      'try { mkdir C:/x } catch { Write-Output "copy failed: $($_.Exception.Message)" }',
+      'Write-Output "move done, del $($n) files, then set-content: $($x.Count)"',
+    ]) {
+      assert.equal(kind(sh(c, KB)), 'allow', c)
+    }
+    assert.equal(kind(bash('echo "rm -rf .kb $(date)"', KB)), 'allow')
   })
 })
 
